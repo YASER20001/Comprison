@@ -1117,11 +1117,29 @@ async function confirmHeaderRow() {
   // Show data count for verification
   const bCount = beforeParsed.data ? beforeParsed.data.length : 0;
   const aCount = afterParsed.data ? afterParsed.data.length : 0;
-  console.log(`[ComprisonTool] Before: ${bCount} records, After: ${aCount} records, Headers: ${beforeParsed.headers.length}`);
+  const bHeaders = beforeParsed.headers ? beforeParsed.headers.length : 0;
+  const aHeaders = afterParsed.headers ? afterParsed.headers.length : 0;
+  console.log(`[ComprisonTool] Before: ${bCount} records, ${bHeaders} fields`);
+  console.log(`[ComprisonTool] After: ${aCount} records, ${aHeaders} fields`);
+  if (bCount > 0) console.log('[ComprisonTool] Sample before:', JSON.stringify(beforeParsed.data[0]).substring(0, 500));
+  if (aCount > 0) console.log('[ComprisonTool] Sample after:', JSON.stringify(afterParsed.data[0]).substring(0, 500));
 
-  if (bCount === 0 && aCount === 0) {
-    alert(`Warning: Both files have 0 records. This may mean the file structure was not recognized correctly.\n\nBefore: ${bCount} records\nAfter: ${aCount} records`);
+  // Remove any previous record count info
+  const prevInfo = document.getElementById('recordCountInfo');
+  if (prevInfo) prevInfo.remove();
+
+  // Show record count info prominently
+  let infoHtml = `<div id="recordCountInfo" style="margin:10px 0;padding:10px 14px;border-radius:8px;font-size:0.8rem;font-weight:600;`;
+  if (bCount === 0 || aCount === 0) {
+    infoHtml += `background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;">`;
+    infoHtml += `Before: ${bCount} records (${bHeaders} fields) | After: ${aCount} records (${aHeaders} fields)`;
+    infoHtml += `<br><span style="font-weight:400;font-size:0.75rem;">0 records means the parser could not extract data. Check the server terminal for [TRANSPOSE] debug logs.</span>`;
+  } else {
+    infoHtml += `background:#f0fdf4;border:1px solid #86efac;color:#166534;">`;
+    infoHtml += `Before: ${bCount} records | After: ${aCount} records`;
   }
+  infoHtml += `</div>`;
+  document.getElementById('detectedColsBox').insertAdjacentHTML('afterend', infoHtml);
 
   // Now show the column picker and key selector
   updateColumnPicker();

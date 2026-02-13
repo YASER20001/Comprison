@@ -355,6 +355,8 @@ def _build_transposed_data(ws, merge_map):
     max_row = ws.max_row or 1
     max_col = ws.max_column or 1
 
+    print(f"[TRANSPOSE] Sheet dimensions: max_row={max_row}, max_col={max_col}")
+
     # Column A values = field names (headers)
     headers = []
     for r in range(1, max_row + 1):
@@ -364,10 +366,14 @@ def _build_transposed_data(ws, merge_map):
             name = f"Field_{r}"
         headers.append(name)
 
+    print(f"[TRANSPOSE] Raw headers (first 10): {headers[:10]}")
+
     # Strip trailing empty Field_N headers
     while headers and headers[-1].startswith("Field_"):
         headers.pop()
     actual_rows = len(headers)
+
+    print(f"[TRANSPOSE] After stripping trailing empty: actual_rows={actual_rows}")
 
     # Deduplicate headers
     seen = {}
@@ -380,6 +386,7 @@ def _build_transposed_data(ws, merge_map):
 
     # Each column (from 2 onwards) is one data record
     data = []
+    empty_cols = 0
     for c in range(2, max_col + 1):
         row_dict = {}
         all_empty = True
@@ -391,6 +398,17 @@ def _build_transposed_data(ws, merge_map):
                 all_empty = False
         if not all_empty:
             data.append(row_dict)
+        else:
+            empty_cols += 1
+
+    print(f"[TRANSPOSE] Result: {len(data)} data records, {empty_cols} empty columns skipped")
+    if data:
+        print(f"[TRANSPOSE] Sample record keys: {list(data[0].keys())[:5]}")
+        # Show first non-empty value
+        for k, v in data[0].items():
+            if v:
+                print(f"[TRANSPOSE] Sample value: {k} = '{v}'")
+                break
 
     return headers, data
 
