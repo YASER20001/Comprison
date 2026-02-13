@@ -455,6 +455,25 @@
       color: #9ca3af;
     }
 
+    /* ── Preview Table ── */
+    #previewTable th, #previewTable td {
+      border: 1px solid #e5e7eb;
+      padding: 4px 8px;
+      white-space: nowrap;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.7rem;
+    }
+    #previewTable tr { cursor: pointer; transition: background 0.15s; }
+    #previewTable tr:hover { background: #e8f0fe !important; }
+    #previewTable tr.selected-header { background: #c6efce !important; font-weight: 700; }
+    #previewTable tr.selected-header td { color: #166534; }
+    #previewTable .row-num {
+      background: #f3f4f6; color: #6b7280; font-weight: 700;
+      text-align: center; min-width: 36px; cursor: default;
+    }
+
     /* ── Animations ── */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -527,6 +546,26 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Header Row Preview / Picker -->
+    <div class="key-selector hidden" id="headerPreview" style="overflow-x:auto;">
+      <h3>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+        Verify Header Row
+      </h3>
+      <p style="margin-bottom:8px;">
+        Auto-detected header: <b id="detectedHeaderLabel">Row 1</b>.
+        If wrong, <b>click the correct header row</b> below. The selected row (green) becomes column names.
+      </p>
+      <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+        <label style="font-size:0.75rem;font-weight:600;color:var(--navy);">File:</label>
+        <select id="previewFileSelect" onchange="showPreview()" style="padding:6px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.8rem;">
+          <option value="before">Before file</option>
+          <option value="after">After file</option>
+        </select>
+      </div>
+      <table id="previewTable" style="border-collapse:collapse;font-size:0.7rem;width:100%;background:#fff;"></table>
     </div>
 
     <!-- Key Column Selector -->
@@ -631,6 +670,9 @@
 // ═══════ STATE ═══════
 let beforeParsed = null;
 let afterParsed = null;
+let beforeFile = null;  // The actual File object for re-parsing
+let afterFile = null;
+let selectedHeaderRow = {};  // {before: "1", after: "1"}
 let comparisonResult = null;
 let sessionId = null;
 let currentFilter = 'all';
@@ -698,12 +740,20 @@ async function uploadFile(file, side) {
         <svg class="check-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         <span class="fname">${data.fileName}</span>
         <span class="fmeta">${data.rowCount} rows · ${data.colCount} columns${data.selectedSheet ? ' · Sheet: ' + data.selectedSheet : ''}</span>
+        <span class="fmeta">Header: row ${data.headerRows || '1'}</span>
         <span class="freplace">Click to replace file</span>
       </div>
     `;
 
-    if (side === 'before') beforeParsed = data;
-    else afterParsed = data;
+    if (side === 'before') {
+      beforeParsed = data;
+      beforeFile = file;
+      selectedHeaderRow.before = data.headerRows || '1';
+    } else {
+      afterParsed = data;
+      afterFile = file;
+      selectedHeaderRow.after = data.headerRows || '1';
+    }
 
     checkReady();
   } catch (err) {
@@ -720,18 +770,103 @@ async function uploadFile(file, side) {
 function checkReady() {
   if (!beforeParsed || !afterParsed) return;
 
-  // Find common columns
+  // Show preview so user can verify/fix header row
+  if (beforeParsed.preview || afterParsed.preview) {
+    document.getElementById('headerPreview').classList.remove('hidden');
+    showPreview();
+  }
+
+  updateKeyColumns();
+}
+
+function updateKeyColumns() {
+  if (!beforeParsed || !afterParsed) return;
+
   const common = beforeParsed.headers.filter(h => afterParsed.headers.includes(h));
   if (common.length === 0) {
-    alert('No common columns found between the two files.');
+    document.getElementById('keySelector').classList.add('hidden');
+    document.getElementById('compareBtnWrap').classList.add('hidden');
     return;
   }
 
-  // Show key column selector
   const sel = document.getElementById('keyColumnSelect');
-  sel.innerHTML = common.map(c => `<option value="${c}">${c}</option>`).join('');
+  sel.innerHTML = common.map(c => `<option value="${c}">${esc(c)}</option>`).join('');
   document.getElementById('keySelector').classList.remove('hidden');
   document.getElementById('compareBtnWrap').classList.remove('hidden');
+}
+
+function showPreview() {
+  const which = document.getElementById('previewFileSelect').value;
+  const parsed = which === 'before' ? beforeParsed : afterParsed;
+  if (!parsed || !parsed.preview) return;
+
+  const headerRowStr = which === 'before' ? selectedHeaderRow.before : selectedHeaderRow.after;
+  const hParts = (headerRowStr || '1').split('-');
+  const hStart = parseInt(hParts[0]);
+  const hEnd = parseInt(hParts[hParts.length - 1]);
+
+  document.getElementById('detectedHeaderLabel').textContent = `Row ${headerRowStr}`;
+
+  let html = '<tbody>';
+  parsed.preview.forEach((row, idx) => {
+    const rowNum = idx + 1;
+    const isHeader = rowNum >= hStart && rowNum <= hEnd;
+    html += `<tr class="${isHeader ? 'selected-header' : ''}" onclick="selectHeaderRow(${rowNum}, '${which}')" title="Click to set row ${rowNum} as header">`;
+    html += `<td class="row-num">${rowNum}</td>`;
+    row.forEach(val => {
+      html += `<td title="${esc(val)}">${esc(val) || '<span style="color:#ccc">—</span>'}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+
+  document.getElementById('previewTable').innerHTML = html;
+}
+
+async function selectHeaderRow(rowNum, which) {
+  const parsed = which === 'before' ? beforeParsed : afterParsed;
+  if (!parsed) return;
+
+  const headerRowStr = String(rowNum);
+
+  // Re-parse with the new header row
+  const filepath = parsed._filepath;
+  const filename = parsed.fileName;
+
+  try {
+    const resp = await fetch('/api/reparse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filepath, filename, headerRow: headerRowStr }),
+    });
+    const data = await resp.json();
+    if (data.error) { alert(data.error); return; }
+
+    if (which === 'before') {
+      beforeParsed = data;
+      selectedHeaderRow.before = headerRowStr;
+    } else {
+      afterParsed = data;
+      selectedHeaderRow.after = headerRowStr;
+    }
+
+    // Update the file info display
+    const contentId = which === 'before' ? 'beforeContent' : 'afterContent';
+    document.getElementById(contentId).innerHTML = `
+      <div class="file-info">
+        <svg class="check-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span class="fname">${data.fileName}</span>
+        <span class="fmeta">${data.rowCount} rows · ${data.colCount} columns</span>
+        <span class="fmeta">Header: row ${headerRowStr}</span>
+        <span class="freplace">Click to replace file</span>
+      </div>
+    `;
+
+    showPreview();
+    updateKeyColumns();
+  } catch (err) {
+    alert('Re-parse failed: ' + err.message);
+  }
 }
 
 // ═══════ COMPARISON ═══════
@@ -1101,6 +1236,9 @@ function exportExcel() {
 function resetAll() {
   beforeParsed = null;
   afterParsed = null;
+  beforeFile = null;
+  afterFile = null;
+  selectedHeaderRow = {};
   comparisonResult = null;
   sessionId = null;
   currentFilter = 'all';
@@ -1112,6 +1250,7 @@ function resetAll() {
   document.getElementById('uploadSection').classList.remove('hidden');
   document.getElementById('keySelector').classList.add('hidden');
   document.getElementById('compareBtnWrap').classList.add('hidden');
+  document.getElementById('headerPreview').classList.add('hidden');
 
   // Reset drop zones
   document.getElementById('dropBefore').classList.remove('done');

@@ -25,7 +25,7 @@ def index():
 
 @app.route("/api/upload", methods=["POST"])
 def upload_file():
-    """Upload and parse a file. Returns headers, row count, etc."""
+    """Upload and parse a file. Returns headers, row count, preview, etc."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -37,6 +37,8 @@ def upload_file():
     if f".{ext}" not in SUPPORTED_EXTENSIONS:
         return jsonify({"error": f"Unsupported file type: .{ext}"}), 400
 
+    header_row = request.form.get("headerRow")  # Optional manual override
+
     # Save to temp location
     uid = str(uuid.uuid4())
     safe_name = f"{uid}.{ext}"
@@ -44,13 +46,35 @@ def upload_file():
     file.save(filepath)
 
     try:
-        parsed = parse_file(filepath, file.filename)
-        # Store filepath for later use
+        parsed = parse_file(filepath, file.filename, header_row=header_row)
+        # Store filepath for later re-parsing
         parsed["_filepath"] = filepath
         parsed["_uid"] = uid
         return jsonify(parsed)
     except Exception as e:
         os.remove(filepath)
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/reparse", methods=["POST"])
+def reparse_file():
+    """Re-parse an already uploaded file with a different header row."""
+    body = request.get_json()
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    filepath = body.get("filepath")
+    filename = body.get("filename")
+    header_row = body.get("headerRow")
+
+    if not filepath or not os.path.exists(filepath):
+        return jsonify({"error": "File not found. Please re-upload."}), 404
+
+    try:
+        parsed = parse_file(filepath, filename, header_row=header_row)
+        parsed["_filepath"] = filepath
+        return jsonify(parsed)
+    except Exception as e:
         return jsonify({"error": str(e)}), 400
 
 
