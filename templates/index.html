@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ComprisonTool — Advanced File Comparison System</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      line-height: 1.5;
+    }
+
+    /* ── KBR Color Palette ── */
+    :root {
+      --navy: #003366;
+      --dark-navy: #002244;
+      --blue: #0066cc;
+      --light-blue: #e8f0fe;
+      --orange: #f58220;
+      --green: #28a745;
+      --red: #dc3545;
+      --grey: #9ca3af;
+      --light-grey: #f3f4f6;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: var(--navy);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header-icon {
+      background: rgba(255,255,255,0.1);
+      padding: 8px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+    }
+    .header-icon svg { width: 28px; height: 28px; color: var(--orange); }
+    .header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
+    .header p { font-size: 0.65rem; color: #93c5fd; letter-spacing: 0.15em; text-transform: uppercase; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+      animation: pulse 2s infinite;
+      display: inline-block;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* ── Main Container ── */
+    .container { max-width: 1280px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── Section Title ── */
+    .section-title { font-size: 1.5rem; font-weight: 700; color: var(--navy); text-align: center; }
+    .section-subtitle { font-size: 0.85rem; color: #64748b; text-align: center; margin-top: 6px; }
+
+    /* ── Upload Grid ── */
+    .upload-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 32px;
+    }
+    @media (max-width: 768px) { .upload-grid { grid-template-columns: 1fr; } }
+
+    .upload-card { animation: fadeIn 0.4s ease-out; }
+    .upload-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .upload-label .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .upload-label h3 {
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--navy);
+    }
+
+    .drop-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 14px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #fff;
+      position: relative;
+    }
+    .drop-zone:hover { border-color: var(--blue); background: #f0f7ff; }
+    .drop-zone.active { border-color: var(--blue); background: var(--light-blue); transform: scale(1.01); }
+    .drop-zone.done { border-color: #86efac; background: #f0fdf4; }
+
+    .drop-zone input { display: none; }
+    .drop-icon {
+      width: 48px; height: 48px; background: var(--light-grey); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 12px;
+    }
+    .drop-icon svg { width: 24px; height: 24px; color: var(--navy); }
+    .drop-zone .title { font-weight: 600; font-size: 0.85rem; color: #374151; }
+    .drop-zone .hint { font-size: 0.75rem; color: #9ca3af; margin-top: 4px; }
+
+    .file-info { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .file-info .check-icon { color: var(--green); }
+    .file-info .fname { font-weight: 600; font-size: 0.85rem; color: #1f2937; }
+    .file-info .fmeta { font-size: 0.75rem; color: #6b7280; }
+    .file-info .freplace { font-size: 0.7rem; color: var(--blue); margin-top: 4px; }
+
+    /* ── Key Column Selector ── */
+    .key-selector {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-top: 28px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      animation: fadeIn 0.4s ease-out;
+    }
+    .key-selector h3 {
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--navy);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .key-selector p { font-size: 0.75rem; color: #6b7280; margin: 8px 0 12px; }
+    .key-selector select {
+      width: 100%; border: 1px solid #d1d5db; border-radius: 10px;
+      padding: 10px 16px; font-size: 0.85rem;
+      background: #fff; outline: none;
+      transition: box-shadow 0.2s;
+    }
+    .key-selector select:focus { box-shadow: 0 0 0 3px rgba(0,102,204,0.2); border-color: var(--blue); }
+
+    /* ── Compare Button ── */
+    .compare-btn-wrap { text-align: center; margin-top: 28px; animation: fadeIn 0.4s ease-out; }
+    .compare-btn {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: var(--navy); color: #fff; border: none;
+      padding: 14px 36px; border-radius: 12px;
+      font-weight: 700; font-size: 0.85rem; text-transform: uppercase;
+      letter-spacing: 0.08em; cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(0,51,102,0.3);
+    }
+    .compare-btn:hover { background: var(--dark-navy); box-shadow: 0 6px 16px rgba(0,51,102,0.4); }
+    .compare-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .compare-btn svg { width: 20px; height: 20px; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Results Header ── */
+    .results-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .results-header h2 { font-size: 1.5rem; font-weight: 700; color: var(--navy); }
+    .results-header .sub { font-size: 0.85rem; color: #64748b; margin-top: 2px; }
+    .results-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+    /* ── View Toggle ── */
+    .view-toggle {
+      display: flex; background: var(--light-grey); border-radius: 8px; padding: 3px;
+    }
+    .view-toggle button {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border: none; border-radius: 6px;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      background: transparent; color: #6b7280; transition: all 0.2s;
+    }
+    .view-toggle button.active { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .view-toggle button svg { width: 14px; height: 14px; }
+
+    /* ── Action Buttons ── */
+    .btn-export {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--green); color: #fff; border: none;
+      padding: 9px 18px; border-radius: 8px;
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-export:hover { background: #219838; }
+    .btn-export svg { width: 16px; height: 16px; }
+
+    .btn-reset {
+      display: flex; align-items: center; gap: 8px;
+      background: #fff; color: #4b5563; border: 1px solid #d1d5db;
+      padding: 9px 18px; border-radius: 8px;
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-reset:hover { background: var(--light-grey); }
+    .btn-reset svg { width: 16px; height: 16px; }
+
+    /* ── Summary Cards ── */
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 900px) { .summary-cards { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 600px) { .summary-cards { grid-template-columns: repeat(2, 1fr); } }
+
+    .summary-card {
+      border-radius: 14px;
+      padding: 16px;
+      animation: fadeIn 0.4s ease-out;
+    }
+    .summary-card .card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .summary-card .card-top svg { width: 20px; height: 20px; }
+    .summary-card .pct { font-size: 0.7rem; opacity: 0.7; }
+    .summary-card .val { font-size: 1.5rem; font-weight: 700; }
+    .summary-card .lbl {
+      font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em;
+      opacity: 0.8; margin-top: 4px;
+    }
+
+    .card-total { background: var(--navy); color: #fff; }
+    .card-added { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .card-deleted { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .card-modified { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+    .card-unchanged { background: #f9fafb; color: #4b5563; border: 1px solid #e5e7eb; }
+
+    /* ── Filter / Search Bar ── */
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      margin-bottom: 16px;
+    }
+    .search-box {
+      flex: 1; min-width: 200px; position: relative;
+    }
+    .search-box input {
+      width: 100%; padding: 10px 16px 10px 36px;
+      border: 1px solid #d1d5db; border-radius: 10px;
+      font-size: 0.85rem; outline: none;
+      transition: box-shadow 0.2s;
+    }
+    .search-box input:focus { box-shadow: 0 0 0 3px rgba(0,102,204,0.15); border-color: var(--blue); }
+    .search-box svg {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      width: 16px; height: 16px; color: #9ca3af;
+    }
+
+    .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip {
+      padding: 6px 14px; border-radius: 20px; border: 1px solid #e5e7eb;
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.04em; cursor: pointer;
+      background: #fff; color: #6b7280;
+      transition: all 0.2s;
+    }
+    .chip:hover { background: var(--light-grey); }
+    .chip.active-all { background: var(--navy); color: #fff; border-color: var(--navy); }
+    .chip.active-added { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .chip.active-deleted { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+    .chip.active-modified { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
+    .chip.active-unchanged { background: #e5e7eb; color: #374151; border-color: #d1d5db; }
+
+    /* ── Comparison Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 14px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      background: #fff;
+    }
+    .comp-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .comp-table th {
+      background: var(--navy); color: #fff;
+      font-weight: 600; text-transform: uppercase;
+      font-size: 0.7rem; letter-spacing: 0.05em;
+      padding: 12px 14px; text-align: left;
+      white-space: nowrap;
+      position: sticky; top: 0; z-index: 5;
+    }
+    .comp-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      white-space: nowrap;
+    }
+    .comp-table tr:hover { filter: brightness(0.97); }
+
+    .row-added td { background: #f0fdf4; }
+    .row-deleted td { background: #fef2f2; }
+    .row-modified td { background: #fffbeb; }
+    .row-unchanged td { background: #fff; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .badge-added { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-deleted { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .badge-modified { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+    .badge-unchanged { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
+
+    /* ── Cell change display ── */
+    .cell-change { display: flex; align-items: center; gap: 4px; }
+    .cell-old { text-decoration: line-through; color: var(--red); font-size: 0.75rem; }
+    .cell-arrow { color: var(--orange); font-size: 0.75rem; }
+    .cell-new { color: var(--green); font-weight: 600; }
+
+    /* ── Expand Row ── */
+    .expand-btn {
+      background: none; border: none; cursor: pointer;
+      color: #9ca3af; transition: color 0.2s; padding: 4px;
+    }
+    .expand-btn:hover { color: var(--navy); }
+    .expand-btn svg { width: 16px; height: 16px; }
+
+    .detail-row td { padding: 0 !important; }
+    .detail-content {
+      padding: 12px 24px 16px;
+      background: rgba(245,130,32,0.04);
+    }
+    .detail-content .detail-title {
+      font-size: 0.7rem; font-weight: 700; color: var(--navy);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+    .changes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+    }
+    .change-card {
+      background: #fff;
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .change-card .col-name {
+      font-size: 0.7rem; font-weight: 600; color: #6b7280;
+      text-transform: uppercase; margin-bottom: 4px;
+    }
+    .change-card .change-vals { display: flex; align-items: center; gap: 6px; }
+    .change-card .old-val { text-decoration: line-through; color: var(--red); font-size: 0.8rem; }
+    .change-card .arrow-val { color: var(--orange); }
+    .change-card .new-val { color: var(--green); font-weight: 600; font-size: 0.8rem; }
+
+    /* ── Pagination ── */
+    .pagination {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 16px;
+    }
+    .pagination button {
+      padding: 8px 18px; border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 0.8rem; cursor: pointer;
+      background: #fff; transition: background 0.2s;
+    }
+    .pagination button:hover:not(:disabled) { background: var(--light-grey); }
+    .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pagination .page-info { font-size: 0.8rem; color: #6b7280; }
+
+    .results-count { font-size: 0.75rem; color: #6b7280; margin-bottom: 8px; }
+
+    /* ── Dashboard ── */
+    .dashboard-section { animation: fadeIn 0.4s ease-out; }
+
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 768px) { .metrics-row { grid-template-columns: repeat(2, 1fr); } }
+
+    .metric-card {
+      background: #fff; border-radius: 14px; border: 1px solid #e5e7eb;
+      padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .metric-bar { width: 32px; height: 4px; border-radius: 2px; margin-bottom: 12px; }
+    .metric-card .mval { font-size: 1.5rem; font-weight: 700; }
+    .metric-card .mlbl {
+      font-size: 0.65rem; font-weight: 600; color: #374151;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;
+    }
+    .metric-card .msub { font-size: 0.7rem; color: #9ca3af; margin-top: 2px; }
+
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+
+    .chart-card {
+      background: #fff; border-radius: 14px; border: 1px solid #e5e7eb;
+      padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .chart-card h3 {
+      font-size: 0.75rem; font-weight: 700; color: var(--navy);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 16px;
+    }
+    .chart-card canvas { max-height: 280px; }
+
+    .col-freq-card {
+      background: #fff; border-radius: 14px; border: 1px solid #e5e7eb;
+      padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .col-freq-card h3 {
+      font-size: 0.75rem; font-weight: 700; color: var(--navy);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 16px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid #e5e7eb;
+      margin-top: 64px;
+      text-align: center;
+      padding: 16px;
+      font-size: 0.7rem;
+      color: #9ca3af;
+    }
+
+    /* ── Animations ── */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── Hide sections ── */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="header-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/>
+          <path d="M6 21V9a9 9 0 0 0 9 9"/><path d="M18 3v12a9 9 0 0 1-9-9"/>
+        </svg>
+      </div>
+      <div>
+        <h1>ComprisonTool</h1>
+        <p>Advanced File Comparison System</p>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:0.75rem;color:#93c5fd;">
+      <span class="status-dot"></span> System Ready
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- ═══════ UPLOAD SECTION ═══════ -->
+  <div id="uploadSection">
+    <h2 class="section-title">Upload Files to Compare</h2>
+    <p class="section-subtitle">Upload the original (before) and updated (after) files to begin comparison</p>
+
+    <div class="upload-grid">
+      <!-- BEFORE -->
+      <div class="upload-card">
+        <div class="upload-label">
+          <span class="dot" style="background:var(--red);"></span>
+          <h3>Before (Original)</h3>
+        </div>
+        <div class="drop-zone" id="dropBefore" onclick="document.getElementById('fileBefore').click()">
+          <input type="file" id="fileBefore" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.tsv,.json" />
+          <div id="beforeContent">
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 7h8M8 11h6M8 15h4"/></svg>
+            </div>
+            <p class="title">Drop file here or click to browse</p>
+            <p class="hint">Supports: Excel (.xlsx, .xls), CSV, TSV, JSON</p>
+          </div>
+        </div>
+      </div>
+      <!-- AFTER -->
+      <div class="upload-card">
+        <div class="upload-label">
+          <span class="dot" style="background:var(--green);"></span>
+          <h3>After (Updated)</h3>
+        </div>
+        <div class="drop-zone" id="dropAfter" onclick="document.getElementById('fileAfter').click()">
+          <input type="file" id="fileAfter" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.tsv,.json" />
+          <div id="afterContent">
+            <div class="drop-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <p class="title">Drop file here or click to browse</p>
+            <p class="hint">Supports: Excel (.xlsx, .xls), CSV, TSV, JSON</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key Column Selector -->
+    <div class="key-selector hidden" id="keySelector">
+      <h3>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        Key Column (Unique Identifier)
+      </h3>
+      <p>Select the column that uniquely identifies each row. This is used to match rows between files.</p>
+      <select id="keyColumnSelect"></select>
+    </div>
+
+    <!-- Compare Button -->
+    <div class="compare-btn-wrap hidden" id="compareBtnWrap">
+      <button class="compare-btn" id="compareBtn" onclick="runComparison()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/>
+          <path d="M6 21V9a9 9 0 0 0 9 9"/><path d="M18 3v12a9 9 0 0 1-9-9"/>
+        </svg>
+        Run Comparison
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════ RESULTS SECTION ═══════ -->
+  <div id="resultsSection" class="hidden">
+    <div class="results-header">
+      <div>
+        <h2>Comparison Results</h2>
+        <p class="sub" id="resultsSubtitle"></p>
+      </div>
+      <div class="results-actions">
+        <div class="view-toggle">
+          <button id="btnTableView" class="active" onclick="setView('table')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+            Table
+          </button>
+          <button id="btnDashView" onclick="setView('dashboard')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
+            Dashboard
+          </button>
+        </div>
+        <button class="btn-export" id="exportBtn" onclick="exportExcel()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export Excel
+        </button>
+        <button class="btn-reset" onclick="resetAll()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          New Comparison
+        </button>
+      </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-cards" id="summaryCards"></div>
+
+    <!-- Table View -->
+    <div id="tableView">
+      <div class="toolbar">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" id="searchInput" placeholder="Search records..." oninput="filterTable()" />
+        </div>
+        <div class="filter-chips" id="filterChips"></div>
+      </div>
+      <p class="results-count" id="resultsCount"></p>
+      <div class="table-wrap">
+        <table class="comp-table" id="compTable">
+          <thead id="compThead"></thead>
+          <tbody id="compTbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- Dashboard View -->
+    <div id="dashboardView" class="hidden dashboard-section">
+      <div class="metrics-row" id="metricsRow"></div>
+      <div class="charts-row">
+        <div class="chart-card">
+          <h3>Change Distribution</h3>
+          <canvas id="pieChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Change Breakdown</h3>
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+      <div class="col-freq-card" id="colFreqCard">
+        <h3>Most Changed Columns</h3>
+        <canvas id="colChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="footer">
+  ComprisonTool &copy; 2026 — Advanced File Comparison System
+</footer>
+
+<script>
+// ═══════ STATE ═══════
+let beforeParsed = null;
+let afterParsed = null;
+let comparisonResult = null;
+let sessionId = null;
+let currentFilter = 'all';
+let currentSearch = '';
+let currentPage = 0;
+const PAGE_SIZE = 50;
+let expandedRows = new Set();
+let pieChartInst = null;
+let barChartInst = null;
+let colChartInst = null;
+
+// ═══════ FILE UPLOAD ═══════
+function setupDropZone(dropId, inputId, side) {
+  const drop = document.getElementById(dropId);
+  const input = document.getElementById(inputId);
+
+  ['dragenter', 'dragover'].forEach(ev => {
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('active'); });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('active'); });
+  });
+  drop.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) uploadFile(file, side);
+  });
+  input.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) uploadFile(file, side);
+  });
+}
+
+async function uploadFile(file, side) {
+  const drop = document.getElementById(side === 'before' ? 'dropBefore' : 'dropAfter');
+  const contentId = side === 'before' ? 'beforeContent' : 'afterContent';
+
+  // Show loading
+  document.getElementById(contentId).innerHTML = `
+    <div class="drop-icon"><div class="spinner" style="border-color:rgba(0,51,102,0.2);border-top-color:var(--navy);width:24px;height:24px;"></div></div>
+    <p class="title">Parsing file...</p>
+  `;
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+
+    if (data.error) {
+      document.getElementById(contentId).innerHTML = `
+        <div class="drop-icon" style="background:#fee2e2;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+        </div>
+        <p class="title" style="color:var(--red);">${data.error}</p>
+        <p class="hint">Try another file</p>
+      `;
+      return;
+    }
+
+    // Success
+    drop.classList.add('done');
+    document.getElementById(contentId).innerHTML = `
+      <div class="file-info">
+        <svg class="check-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span class="fname">${data.fileName}</span>
+        <span class="fmeta">${data.rowCount} rows · ${data.colCount} columns${data.selectedSheet ? ' · Sheet: ' + data.selectedSheet : ''}</span>
+        <span class="freplace">Click to replace file</span>
+      </div>
+    `;
+
+    if (side === 'before') beforeParsed = data;
+    else afterParsed = data;
+
+    checkReady();
+  } catch (err) {
+    document.getElementById(contentId).innerHTML = `
+      <div class="drop-icon" style="background:#fee2e2;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+      </div>
+      <p class="title" style="color:var(--red);">Upload failed</p>
+      <p class="hint">${err.message}</p>
+    `;
+  }
+}
+
+function checkReady() {
+  if (!beforeParsed || !afterParsed) return;
+
+  // Find common columns
+  const common = beforeParsed.headers.filter(h => afterParsed.headers.includes(h));
+  if (common.length === 0) {
+    alert('No common columns found between the two files.');
+    return;
+  }
+
+  // Show key column selector
+  const sel = document.getElementById('keyColumnSelect');
+  sel.innerHTML = common.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('keySelector').classList.remove('hidden');
+  document.getElementById('compareBtnWrap').classList.remove('hidden');
+}
+
+// ═══════ COMPARISON ═══════
+async function runComparison() {
+  const keyCol = document.getElementById('keyColumnSelect').value;
+  if (!keyCol) return;
+
+  const btn = document.getElementById('compareBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Comparing Files...';
+
+  try {
+    const resp = await fetch('/api/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        beforeData: beforeParsed.data,
+        afterData: afterParsed.data,
+        keyColumn: keyCol,
+        beforeHeaders: beforeParsed.headers,
+        afterHeaders: afterParsed.headers,
+        beforeFileName: beforeParsed.fileName,
+        afterFileName: afterParsed.fileName,
+      }),
+    });
+    const data = await resp.json();
+
+    if (data.error) {
+      alert(data.error);
+      btn.disabled = false;
+      btn.innerHTML = 'Run Comparison';
+      return;
+    }
+
+    comparisonResult = data;
+    sessionId = data.sessionId;
+    showResults();
+  } catch (err) {
+    alert('Comparison failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/>
+        <path d="M6 21V9a9 9 0 0 0 9 9"/><path d="M18 3v12a9 9 0 0 1-9-9"/>
+      </svg>
+      Run Comparison
+    `;
+  }
+}
+
+// ═══════ SHOW RESULTS ═══════
+function showResults() {
+  document.getElementById('uploadSection').classList.add('hidden');
+  document.getElementById('resultsSection').classList.remove('hidden');
+
+  const r = comparisonResult;
+  document.getElementById('resultsSubtitle').textContent = `${r.beforeFileName} vs ${r.afterFileName}`;
+
+  renderSummaryCards();
+  renderFilterChips();
+  renderTable();
+  renderDashboard();
+}
+
+function renderSummaryCards() {
+  const s = comparisonResult.summary;
+  const total = s.total || 1;
+  const cards = [
+    { cls: 'card-total', val: s.total, lbl: 'Total Records',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>',
+      pct: '' },
+    { cls: 'card-added', val: s.added, lbl: 'Added',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+      pct: ((s.added / total) * 100).toFixed(1) + '%' },
+    { cls: 'card-deleted', val: s.deleted, lbl: 'Deleted',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+      pct: ((s.deleted / total) * 100).toFixed(1) + '%' },
+    { cls: 'card-modified', val: s.modified, lbl: 'Modified',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+      pct: ((s.modified / total) * 100).toFixed(1) + '%' },
+    { cls: 'card-unchanged', val: s.unchanged, lbl: 'Unchanged',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="9" x2="19" y2="9"/><line x1="5" y1="15" x2="19" y2="15"/></svg>',
+      pct: ((s.unchanged / total) * 100).toFixed(1) + '%' },
+  ];
+
+  document.getElementById('summaryCards').innerHTML = cards.map((c, i) => `
+    <div class="summary-card ${c.cls}" style="animation-delay:${i * 80}ms">
+      <div class="card-top">${c.icon}<span class="pct">${c.pct}</span></div>
+      <div class="val">${c.val}</div>
+      <div class="lbl">${c.lbl}</div>
+    </div>
+  `).join('');
+}
+
+// ═══════ FILTER CHIPS ═══════
+function renderFilterChips() {
+  const chips = ['all', 'added', 'deleted', 'modified', 'unchanged'];
+  document.getElementById('filterChips').innerHTML = chips.map(f => {
+    const active = currentFilter === f ? `active-${f}` : '';
+    return `<button class="chip ${active}" onclick="setFilter('${f}')">${f === 'all' ? 'All' : f}</button>`;
+  }).join('');
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  currentPage = 0;
+  expandedRows.clear();
+  renderFilterChips();
+  renderTable();
+}
+
+function filterTable() {
+  currentSearch = document.getElementById('searchInput').value.toLowerCase();
+  currentPage = 0;
+  expandedRows.clear();
+  renderTable();
+}
+
+// ═══════ TABLE RENDERING ═══════
+function getFilteredRows() {
+  let rows = comparisonResult.rows;
+  if (currentFilter !== 'all') rows = rows.filter(r => r.status === currentFilter);
+  if (currentSearch) {
+    rows = rows.filter(r => {
+      const data = r.afterData || r.beforeData || {};
+      if (r.keyValue.toLowerCase().includes(currentSearch)) return true;
+      return Object.values(data).some(v => String(v).toLowerCase().includes(currentSearch));
+    });
+  }
+  return rows;
+}
+
+function renderTable() {
+  const r = comparisonResult;
+  const filtered = getFilteredRows();
+  const paged = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const dataCols = r.columns.filter(c => c !== r.keyColumn);
+
+  // Count
+  document.getElementById('resultsCount').textContent =
+    `Showing ${paged.length} of ${filtered.length} records` +
+    (currentFilter !== 'all' ? ` (filtered: ${currentFilter})` : '');
+
+  // Header
+  document.getElementById('compThead').innerHTML = `<tr>
+    <th>Status</th><th>${esc(r.keyColumn)}</th>
+    ${dataCols.map(c => `<th>${esc(c)}</th>`).join('')}
+    <th style="width:40px"></th>
+  </tr>`;
+
+  // Body
+  const statusLabels = { added: 'ADDED', deleted: 'DELETED', modified: 'MODIFIED', unchanged: 'NO CHANGE' };
+  let html = '';
+  paged.forEach((row, idx) => {
+    const globalIdx = currentPage * PAGE_SIZE + idx;
+    const data = row.afterData || row.beforeData || {};
+    const changedCols = new Set(row.changes.map(c => c.column));
+
+    html += `<tr class="row-${row.status}">`;
+    html += `<td><span class="badge badge-${row.status}">${statusLabels[row.status]}</span></td>`;
+    html += `<td style="font-weight:600;color:#1f2937;">${esc(row.keyValue)}</td>`;
+
+    dataCols.forEach(col => {
+      if (changedCols.has(col)) {
+        const change = row.changes.find(c => c.column === col);
+        html += `<td><span class="cell-change">
+          <span class="cell-old">${esc(String(change.oldValue ?? ''))}</span>
+          <span class="cell-arrow">→</span>
+          <span class="cell-new">${esc(String(change.newValue ?? ''))}</span>
+        </span></td>`;
+      } else {
+        html += `<td style="color:#6b7280;">${esc(String(data[col] ?? ''))}</td>`;
+      }
+    });
+
+    // Expand button
+    if (row.status === 'modified' && row.changes.length > 0) {
+      const isExp = expandedRows.has(globalIdx);
+      html += `<td><button class="expand-btn" onclick="toggleExpand(${globalIdx})">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          ${isExp ? '<polyline points="18 15 12 9 6 15"/>' : '<polyline points="6 9 12 15 18 9"/>'}
+        </svg>
+      </button></td>`;
+    } else {
+      html += '<td></td>';
+    }
+    html += '</tr>';
+
+    // Expanded detail row
+    if (expandedRows.has(globalIdx) && row.status === 'modified') {
+      html += `<tr class="detail-row"><td colspan="${dataCols.length + 3}">
+        <div class="detail-content">
+          <div class="detail-title">Change Details</div>
+          <div class="changes-grid">
+            ${row.changes.map(c => `
+              <div class="change-card">
+                <div class="col-name">${esc(c.column)}</div>
+                <div class="change-vals">
+                  <span class="old-val">${esc(String(c.oldValue ?? '')) || '(empty)'}</span>
+                  <span class="arrow-val">→</span>
+                  <span class="new-val">${esc(String(c.newValue ?? '')) || '(empty)'}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </td></tr>`;
+    }
+  });
+
+  document.getElementById('compTbody').innerHTML = html;
+
+  // Pagination
+  if (totalPages > 1) {
+    document.getElementById('pagination').innerHTML = `
+      <button ${currentPage === 0 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Previous</button>
+      <span class="page-info">Page ${currentPage + 1} of ${totalPages}</span>
+      <button ${currentPage >= totalPages - 1 ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Next</button>
+    `;
+  } else {
+    document.getElementById('pagination').innerHTML = '';
+  }
+}
+
+function toggleExpand(idx) {
+  if (expandedRows.has(idx)) expandedRows.delete(idx);
+  else expandedRows.add(idx);
+  renderTable();
+}
+
+function changePage(p) {
+  currentPage = p;
+  expandedRows.clear();
+  renderTable();
+  document.querySelector('.table-wrap').scrollTop = 0;
+}
+
+// ═══════ DASHBOARD ═══════
+function renderDashboard() {
+  const s = comparisonResult.summary;
+  const total = s.total || 1;
+  const changeRate = (((s.added + s.deleted + s.modified) / total) * 100).toFixed(1);
+  const stabilityRate = ((s.unchanged / total) * 100).toFixed(1);
+
+  // Column change frequency
+  const colFreq = {};
+  comparisonResult.rows.forEach(r => {
+    r.changes.forEach(c => { colFreq[c.column] = (colFreq[c.column] || 0) + 1; });
+  });
+  const colData = Object.entries(colFreq).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+  // Metrics
+  document.getElementById('metricsRow').innerHTML = [
+    { val: changeRate + '%', lbl: 'Change Rate', sub: 'Records with changes', color: 'var(--orange)' },
+    { val: stabilityRate + '%', lbl: 'Stability Rate', sub: 'Records unchanged', color: 'var(--navy)' },
+    { val: Object.keys(colFreq).length, lbl: 'Columns Affected', sub: `of ${comparisonResult.columns.length} total`, color: 'var(--blue)' },
+    { val: s.added + s.deleted + s.modified, lbl: 'Total Changes', sub: 'Across all records', color: 'var(--red)' },
+  ].map(m => `
+    <div class="metric-card">
+      <div class="metric-bar" style="background:${m.color}"></div>
+      <div class="mval" style="color:${m.color}">${m.val}</div>
+      <div class="mlbl">${m.lbl}</div>
+      <div class="msub">${m.sub}</div>
+    </div>
+  `).join('');
+
+  // Pie Chart
+  if (pieChartInst) pieChartInst.destroy();
+  const pieData = [
+    { label: 'Added', value: s.added, color: '#28a745' },
+    { label: 'Deleted', value: s.deleted, color: '#dc3545' },
+    { label: 'Modified', value: s.modified, color: '#f58220' },
+    { label: 'Unchanged', value: s.unchanged, color: '#9ca3af' },
+  ].filter(d => d.value > 0);
+
+  pieChartInst = new Chart(document.getElementById('pieChart'), {
+    type: 'doughnut',
+    data: {
+      labels: pieData.map(d => d.label),
+      datasets: [{
+        data: pieData.map(d => d.value),
+        backgroundColor: pieData.map(d => d.color),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true } },
+      },
+      cutout: '60%',
+    },
+  });
+
+  // Bar Chart
+  if (barChartInst) barChartInst.destroy();
+  barChartInst = new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Added', 'Deleted', 'Modified', 'Unchanged'],
+      datasets: [{
+        data: [s.added, s.deleted, s.modified, s.unchanged],
+        backgroundColor: ['#28a745', '#dc3545', '#f58220', '#9ca3af'],
+        borderRadius: 6,
+        barThickness: 40,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+
+  // Column frequency chart
+  if (colData.length > 0) {
+    document.getElementById('colFreqCard').classList.remove('hidden');
+    if (colChartInst) colChartInst.destroy();
+    colChartInst = new Chart(document.getElementById('colChart'), {
+      type: 'bar',
+      data: {
+        labels: colData.map(d => d[0]),
+        datasets: [{
+          label: 'Changes',
+          data: colData.map(d => d[1]),
+          backgroundColor: '#f58220',
+          borderRadius: 6,
+          barThickness: 20,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+          y: { grid: { display: false } },
+        },
+      },
+    });
+  } else {
+    document.getElementById('colFreqCard').classList.add('hidden');
+  }
+}
+
+// ═══════ VIEW TOGGLE ═══════
+function setView(view) {
+  document.getElementById('tableView').classList.toggle('hidden', view !== 'table');
+  document.getElementById('dashboardView').classList.toggle('hidden', view !== 'dashboard');
+  document.getElementById('btnTableView').classList.toggle('active', view === 'table');
+  document.getElementById('btnDashView').classList.toggle('active', view === 'dashboard');
+}
+
+// ═══════ EXPORT ═══════
+function exportExcel() {
+  if (!sessionId) return;
+  window.location.href = `/api/export/${sessionId}`;
+}
+
+// ═══════ RESET ═══════
+function resetAll() {
+  beforeParsed = null;
+  afterParsed = null;
+  comparisonResult = null;
+  sessionId = null;
+  currentFilter = 'all';
+  currentSearch = '';
+  currentPage = 0;
+  expandedRows.clear();
+
+  document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('uploadSection').classList.remove('hidden');
+  document.getElementById('keySelector').classList.add('hidden');
+  document.getElementById('compareBtnWrap').classList.add('hidden');
+
+  // Reset drop zones
+  document.getElementById('dropBefore').classList.remove('done');
+  document.getElementById('dropAfter').classList.remove('done');
+  document.getElementById('beforeContent').innerHTML = `
+    <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 7h8M8 11h6M8 15h4"/></svg></div>
+    <p class="title">Drop file here or click to browse</p>
+    <p class="hint">Supports: Excel (.xlsx, .xls), CSV, TSV, JSON</p>
+  `;
+  document.getElementById('afterContent').innerHTML = `
+    <div class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
+    <p class="title">Drop file here or click to browse</p>
+    <p class="hint">Supports: Excel (.xlsx, .xls), CSV, TSV, JSON</p>
+  `;
+
+  document.getElementById('fileBefore').value = '';
+  document.getElementById('fileAfter').value = '';
+  document.getElementById('searchInput').value = '';
+}
+
+// ═══════ UTILS ═══════
+function esc(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ═══════ INIT ═══════
+setupDropZone('dropBefore', 'fileBefore', 'before');
+setupDropZone('dropAfter', 'fileAfter', 'after');
+</script>
+</body>
+</html>
