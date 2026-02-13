@@ -127,13 +127,18 @@ def debug_upload():
     try:
         from openpyxl import load_workbook
         from openpyxl.utils import range_boundaries
-        from file_parser import _build_merge_map, _get_merged_cell_value
+        from file_parser import (
+            _build_merge_map, _get_merged_cell_value,
+            _strategy_autofilter, _strategy_tables,
+            _strategy_formatting, _strategy_merges,
+            _strategy_content_pattern, _detect_header_block,
+        )
 
         wb = load_workbook(filepath, read_only=False, data_only=True)
         ws = wb[wb.sheetnames[0]]
         merge_map = _build_merge_map(ws)
 
-        max_col = min(ws.max_column or 1, 30)
+        max_col = min(ws.max_column or 1, 40)
         max_row = min(ws.max_row or 1, 15)
 
         rows = []
@@ -142,24 +147,54 @@ def debug_upload():
             for c in range(1, max_col + 1):
                 raw = ws.cell(row=r, column=c).value
                 resolved = _get_merged_cell_value(ws, r, c, merge_map)
+                cell = ws.cell(row=r, column=c)
+                bold = cell.font.bold if cell.font else False
+                fill_rgb = None
+                if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb:
+                    rgb = str(cell.fill.fgColor.rgb)
+                    if rgb not in ("00000000", "0", "None", "00FFFFFF"):
+                        fill_rgb = rgb
                 cells.append({
                     "col": c,
                     "raw": str(raw) if raw is not None else None,
                     "resolved": str(resolved) if resolved is not None else None,
+                    "bold": bold,
+                    "fill": fill_rgb,
                 })
             rows.append({"row": r, "cells": cells})
 
         # Show merged ranges
         merges = [str(m) for m in ws.merged_cells.ranges]
+
+        # Show detection results
+        af_ref = str(ws.auto_filter.ref) if ws.auto_filter and ws.auto_filter.ref else None
+        table_refs = []
+        if hasattr(ws, 'tables') and ws.tables:
+            for t in ws.tables.values():
+                table_refs.append(str(t.ref))
+
+        strategies = {
+            "autofilter": {"ref": af_ref, "result": _strategy_autofilter(ws)},
+            "tables": {"refs": table_refs, "result": _strategy_tables(ws)},
+            "formatting": {"result": _strategy_formatting(ws, merge_map)},
+            "merges": {"result": _strategy_merges(ws, merge_map)},
+            "content_pattern": {"result": _strategy_content_pattern(ws, merge_map)},
+        }
+
+        header_start, header_end = _detect_header_block(ws, merge_map)
+
         wb.close()
         os.remove(filepath)
 
         return jsonify({
             "sheetName": wb.sheetnames[0] if wb.sheetnames else "",
+            "allSheets": wb.sheetnames,
             "maxRow": ws.max_row,
             "maxCol": ws.max_column,
             "mergedRanges": merges,
             "rows": rows,
+            "strategies": strategies,
+            "detectedHeaders": f"rows {header_start}-{header_end}",
         })
     except Exception as e:
         os.remove(filepath)

@@ -4,7 +4,8 @@ import json
 import re
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.utils import range_boundaries
+from openpyxl.utils import range_boundaries, get_column_letter
+from openpyxl.styles import Font, PatternFill
 
 
 SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".tsv", ".json"}
@@ -37,6 +38,10 @@ def parse_file(filepath, filename):
         return _parse_csv(filepath, filename)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# OPENPYXL HELPERS
+# ═══════════════════════════════════════════════════════════════════
+
 def _get_merged_cell_value(ws, row, col, merge_map):
     """Get the value of a cell, resolving merged cell references."""
     key = (row, col)
@@ -58,98 +63,183 @@ def _build_merge_map(ws):
     return merge_map
 
 
-def _get_horizontal_merges_by_row(ws):
+# ═══════════════════════════════════════════════════════════════════
+# MULTI-STRATEGY HEADER DETECTION
+# ═══════════════════════════════════════════════════════════════════
+
+def _strategy_autofilter(ws):
     """
-    Find all horizontal merges (spanning multiple columns) and group by row.
-    Returns dict: row_number -> list of (min_col, max_col, min_row, max_row).
-    A row that participates in a horizontal merge is likely a header row.
+    Strategy 1: Excel AutoFilter.
+    If the sheet has AutoFilter enabled, the first row of the filter range
+    is always the header row. This is the most reliable signal.
+    Returns (header_start, header_end) or None.
     """
-    h_merges = {}
-    for merged_range in ws.merged_cells.ranges:
-        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
-        # Horizontal merge = spans multiple columns
-        if max_col > min_col:
-            for r in range(min_row, max_row + 1):
-                h_merges.setdefault(r, []).append((min_col, max_col, min_row, max_row))
-    return h_merges
+    af = ws.auto_filter
+    if af and af.ref:
+        ref = str(af.ref)
+        # Parse range like "A1:AJ500" or "A3:Z100"
+        match = re.match(r'[A-Z]+(\d+):', ref)
+        if match:
+            header_row = int(match.group(1))
+            return header_row, header_row
+    return None
 
 
-def _get_vertical_merges_by_row(ws):
+def _strategy_tables(ws):
     """
-    Find all vertical merges (spanning multiple rows) and group by row.
-    Returns dict: row_number -> list of (min_col, max_col, min_row, max_row).
+    Strategy 2: Excel Table objects.
+    If the sheet has a Table, the first row of the table range is the header.
+    Returns (header_start, header_end) or None.
     """
-    v_merges = {}
-    for merged_range in ws.merged_cells.ranges:
-        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
-        if max_row > min_row:
-            for r in range(min_row, max_row + 1):
-                v_merges.setdefault(r, []).append((min_col, max_col, min_row, max_row))
-    return v_merges
+    if hasattr(ws, 'tables') and ws.tables:
+        for table in ws.tables.values():
+            ref = str(table.ref)
+            match = re.match(r'[A-Z]+(\d+):', ref)
+            if match:
+                header_row = int(match.group(1))
+                return header_row, header_row
+    return None
 
 
-def _detect_header_block(ws, merge_map, max_scan=25):
+def _strategy_formatting(ws, merge_map, max_scan=15):
     """
-    Auto-detect where the header block starts and ends.
+    Strategy 3: Cell formatting (bold font, background fill, borders).
+    Header rows typically have bold text and/or colored backgrounds.
+    Find the block of rows at the top with distinctive formatting.
+    Returns (header_start, header_end) or None.
+    """
+    max_col = min(ws.max_column or 1, 50)
+    max_row = min(ws.max_row or 1, max_scan)
 
-    Returns (header_start_row, header_end_row) — both 1-indexed inclusive.
-    Data starts at header_end_row + 1.
+    row_format_scores = []
+    for r in range(1, max_row + 1):
+        bold_count = 0
+        fill_count = 0
+        non_empty = 0
 
-    Primary strategy: use MERGED CELL PATTERNS.
-    - Header rows have horizontal merges (group headers spanning columns).
-    - Header rows also have vertical merges (labels spanning rows).
-    - Data rows almost never have horizontal merges.
-    - The header block = all rows involved in any merge, up to the last merge row.
+        for c in range(1, max_col + 1):
+            cell = ws.cell(row=r, column=c)
+            val = _get_merged_cell_value(ws, r, c, merge_map)
+            if val is not None and str(val).strip():
+                non_empty += 1
 
-    Fallback: if no merges, use the first row as header.
+            # Check bold
+            if cell.font and cell.font.bold:
+                bold_count += 1
+
+            # Check background fill (not default/no fill)
+            if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb:
+                rgb = str(cell.fill.fgColor.rgb)
+                # Skip default/no fill values
+                if rgb not in ("00000000", "0", "None", "00FFFFFF"):
+                    fill_count += 1
+
+        # Score: how "header-like" is this row?
+        score = 0
+        if non_empty > 0:
+            bold_ratio = bold_count / max(non_empty, 1)
+            fill_ratio = fill_count / max(non_empty, 1)
+            if bold_ratio >= 0.5:
+                score += 2
+            if fill_ratio >= 0.3:
+                score += 2
+            if bold_count >= 3:
+                score += 1
+            if fill_count >= 3:
+                score += 1
+
+        row_format_scores.append({
+            "row": r,
+            "score": score,
+            "non_empty": non_empty,
+            "bold": bold_count,
+            "fill": fill_count,
+        })
+
+    # Find contiguous block of "formatted" rows at the top
+    header_start = None
+    header_end = None
+    for info in row_format_scores:
+        if info["score"] >= 2 and info["non_empty"] > 0:
+            if header_start is None:
+                header_start = info["row"]
+            header_end = info["row"]
+        elif header_start is not None:
+            # Gap in formatting — stop
+            break
+
+    if header_start is not None and header_end is not None:
+        return header_start, header_end
+    return None
+
+
+def _strategy_merges(ws, merge_map, max_scan=25):
+    """
+    Strategy 4: Merged cell patterns.
+    Header rows have horizontal/vertical merges. Data rows don't.
+    Returns (header_start, header_end) or None.
     """
     max_col = ws.max_column or 1
 
-    h_merges = _get_horizontal_merges_by_row(ws)
-    v_merges = _get_vertical_merges_by_row(ws)
+    h_merges = {}
+    v_merges = {}
+    for merged_range in ws.merged_cells.ranges:
+        min_col, min_row, max_col_r, max_row_r = range_boundaries(str(merged_range))
+        if max_col_r > min_col:
+            for r in range(min_row, max_row_r + 1):
+                h_merges.setdefault(r, []).append((min_col, max_col_r, min_row, max_row_r))
+        if max_row_r > min_row:
+            for r in range(min_row, max_row_r + 1):
+                v_merges.setdefault(r, []).append((min_col, max_col_r, min_row, max_row_r))
 
-    # Combine: rows that participate in ANY merge (horizontal or vertical)
     all_merge_rows = set(h_merges.keys()) | set(v_merges.keys())
+    if not all_merge_rows:
+        return None
 
-    if all_merge_rows:
-        # The header block is from the first merge row to the last merge row
-        # (within a reasonable scan range)
-        merge_rows_in_range = [r for r in all_merge_rows if r <= max_scan]
-        if merge_rows_in_range:
-            header_start = min(merge_rows_in_range)
-            header_end = max(merge_rows_in_range)
+    merge_rows_in_range = [r for r in all_merge_rows if r <= max_scan]
+    if not merge_rows_in_range:
+        return None
 
-            # Sanity check: if header_start is row 1 and it's a single merged
-            # title spanning ALL columns with only 1 value, skip it.
-            # A title row = 1 horizontal merge spanning most of the sheet.
-            while header_start < header_end:
-                merges_on_row = h_merges.get(header_start, [])
-                if len(merges_on_row) == 1:
-                    mc_min, mc_max, _, _ = merges_on_row[0]
-                    span = mc_max - mc_min + 1
-                    # If this single merge covers > 70% of columns, it's a title row
-                    if span > max_col * 0.7:
-                        header_start += 1
-                        continue
-                break
+    header_start = min(merge_rows_in_range)
+    header_end = max(merge_rows_in_range)
 
-            # Also skip blank rows at the start
-            while header_start < header_end:
-                has_content = False
-                for c in range(1, max_col + 1):
-                    val = _get_merged_cell_value(ws, header_start, c, merge_map)
-                    if val is not None and str(val).strip():
-                        has_content = True
-                        break
-                if has_content:
-                    break
+    # Skip title rows: single horizontal merge spanning >70% of columns
+    while header_start < header_end:
+        merges_on_row = h_merges.get(header_start, [])
+        if len(merges_on_row) == 1:
+            mc_min, mc_max, _, _ = merges_on_row[0]
+            span = mc_max - mc_min + 1
+            if span > max_col * 0.7:
                 header_start += 1
+                continue
+        break
 
-            return header_start, header_end
+    # Skip blank rows at start
+    while header_start < header_end:
+        has_content = False
+        for c in range(1, max_col + 1):
+            val = _get_merged_cell_value(ws, header_start, c, merge_map)
+            if val is not None and str(val).strip():
+                has_content = True
+                break
+        if has_content:
+            break
+        header_start += 1
 
-    # FALLBACK: No merges found. Use row content analysis.
-    # Find the first row with content — that's the header.
+    return header_start, header_end
+
+
+def _strategy_content_pattern(ws, merge_map, max_scan=20):
+    """
+    Strategy 5 (fallback): Content pattern analysis.
+    Look at the first N rows. The header row is the first row where
+    most cells are SHORT text strings (column names are typically short).
+    Data rows that follow will have different value patterns.
+    Returns (header_start, header_end).
+    """
+    max_col = min(ws.max_column or 1, 50)
     max_row = min(ws.max_row or 1, max_scan)
+
     for r in range(1, max_row + 1):
         non_empty = 0
         for c in range(1, max_col + 1):
@@ -161,6 +251,58 @@ def _detect_header_block(ws, merge_map, max_scan=25):
 
     return 1, 1
 
+
+def _detect_header_block(ws, merge_map, max_scan=25):
+    """
+    Multi-strategy header detection. Tries strategies in order of reliability:
+    1. AutoFilter (most reliable — Excel stores the exact header row)
+    2. Table objects (Excel tables have explicit header rows)
+    3. Cell formatting (bold/colored rows = headers)
+    4. Merged cell patterns (horizontal merges = group headers)
+    5. Content pattern fallback (first row with 3+ values)
+
+    Returns (header_start_row, header_end_row) — both 1-indexed inclusive.
+    """
+    # Strategy 1: AutoFilter
+    result = _strategy_autofilter(ws)
+    if result:
+        # AutoFilter gives us the header row. But there may be group header
+        # rows ABOVE it (with merges). Check if merges extend above.
+        af_start, af_end = result
+        merge_result = _strategy_merges(ws, merge_map, max_scan)
+        if merge_result:
+            m_start, m_end = merge_result
+            # If merges start before the autofilter row and end at or after it,
+            # use the merge range as the full header block
+            if m_start <= af_start and m_end >= af_start:
+                return m_start, m_end
+            # If merges are entirely above the autofilter, include them
+            if m_end < af_start:
+                return m_start, af_end
+        return result
+
+    # Strategy 2: Table objects
+    result = _strategy_tables(ws)
+    if result:
+        return result
+
+    # Strategy 3: Cell formatting
+    result = _strategy_formatting(ws, merge_map)
+    if result:
+        return result
+
+    # Strategy 4: Merged cell patterns
+    result = _strategy_merges(ws, merge_map, max_scan)
+    if result:
+        return result
+
+    # Strategy 5: Content pattern fallback
+    return _strategy_content_pattern(ws, merge_map, max_scan)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EXCEL PARSING
+# ═══════════════════════════════════════════════════════════════════
 
 def _parse_excel_openpyxl(filepath, filename):
     """Parse Excel files using openpyxl to handle merged cells and multi-row headers."""
@@ -187,7 +329,7 @@ def _parse_excel_openpyxl(filepath, filename):
         header = " - ".join(parts) if parts else f"Column_{c}"
         headers.append(header)
 
-    # Strip out headers that are entirely blank (Column_N) from the end
+    # Strip out trailing blank (Column_N) headers
     while headers and headers[-1].startswith("Column_"):
         headers.pop()
     max_col = len(headers)
@@ -252,6 +394,10 @@ def _parse_excel_xls(filepath, filename):
         "colCount": len(headers),
     }
 
+
+# ═══════════════════════════════════════════════════════════════════
+# CSV / JSON PARSING
+# ═══════════════════════════════════════════════════════════════════
 
 def _parse_csv(filepath, filename, sep=","):
     """Parse CSV/TSV files."""
