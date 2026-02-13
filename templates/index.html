@@ -1100,12 +1100,27 @@ async function selectHeaderRow(rowNum, which) {
 async function confirmHeaderRow() {
   if (!beforeParsed || !afterParsed) return;
 
-  // If transpose mode was just toggled, both files are already re-parsed
-  // If normal mode and user changed header for one file, re-parse the other too
-  if (!isTransposed) {
-    // Make sure both files are parsed with their selected header rows
-    await reparseFile('before');
-    await reparseFile('after');
+  // Always re-parse both files to ensure data matches current mode
+  const btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="border-color:rgba(255,255,255,0.3);border-top-color:#fff;width:16px;height:16px;display:inline-block;"></span> Parsing...';
+
+  await reparseFile('before');
+  await reparseFile('after');
+
+  btn.disabled = false;
+  btn.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+    Confirm Column Names
+  `;
+
+  // Show data count for verification
+  const bCount = beforeParsed.data ? beforeParsed.data.length : 0;
+  const aCount = afterParsed.data ? afterParsed.data.length : 0;
+  console.log(`[ComprisonTool] Before: ${bCount} records, After: ${aCount} records, Headers: ${beforeParsed.headers.length}`);
+
+  if (bCount === 0 && aCount === 0) {
+    alert(`Warning: Both files have 0 records. This may mean the file structure was not recognized correctly.\n\nBefore: ${bCount} records\nAfter: ${aCount} records`);
   }
 
   // Now show the column picker and key selector
@@ -1125,18 +1140,24 @@ async function runComparison() {
   btn.innerHTML = '<span class="spinner"></span> Comparing Files...';
 
   try {
+    const payload = {
+      beforeData: beforeParsed.data,
+      afterData: afterParsed.data,
+      keyColumn: keyCol,
+      beforeHeaders: beforeParsed.headers.filter(h => selectedColumns.includes(h)),
+      afterHeaders: afterParsed.headers.filter(h => selectedColumns.includes(h)),
+      beforeFileName: beforeParsed.fileName,
+      afterFileName: afterParsed.fileName,
+    };
+    console.log(`[ComprisonTool] Comparing: before=${payload.beforeData.length} records, after=${payload.afterData.length} records, key="${keyCol}", headers=${payload.beforeHeaders.length}`);
+    if (payload.beforeData.length > 0) {
+      console.log('[ComprisonTool] Sample before record keys:', Object.keys(payload.beforeData[0]));
+      console.log('[ComprisonTool] Sample before key value:', payload.beforeData[0][keyCol]);
+    }
     const resp = await fetch('/api/compare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        beforeData: beforeParsed.data,
-        afterData: afterParsed.data,
-        keyColumn: keyCol,
-        beforeHeaders: beforeParsed.headers.filter(h => selectedColumns.includes(h)),
-        afterHeaders: afterParsed.headers.filter(h => selectedColumns.includes(h)),
-        beforeFileName: beforeParsed.fileName,
-        afterFileName: afterParsed.fileName,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
 

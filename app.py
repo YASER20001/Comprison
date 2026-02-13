@@ -97,6 +97,15 @@ def compare():
     if not key_column:
         return jsonify({"error": "keyColumn is required"}), 400
 
+    # Debug logging
+    print(f"[COMPARE] before_data: {len(before_data)} records, after_data: {len(after_data)} records")
+    print(f"[COMPARE] key_column: '{key_column}'")
+    print(f"[COMPARE] before_headers: {before_headers[:5]}...")
+    print(f"[COMPARE] after_headers: {after_headers[:5]}...")
+    if before_data:
+        print(f"[COMPARE] Sample before record keys: {list(before_data[0].keys())[:5]}...")
+        print(f"[COMPARE] Sample before key value: '{before_data[0].get(key_column, 'NOT FOUND')}'")
+
     all_columns = list(dict.fromkeys(before_headers + after_headers))
 
     result = compare_datasets(before_data, after_data, key_column, all_columns)
