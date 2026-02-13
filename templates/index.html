@@ -1001,6 +1001,49 @@ function updateKeyColumns() {
 
   document.getElementById('keySelector').classList.remove('hidden');
   document.getElementById('compareBtnWrap').classList.remove('hidden');
+
+  // Add change handler to show key value preview
+  sel.onchange = showKeyValuePreview;
+  showKeyValuePreview();
+}
+
+function showKeyValuePreview() {
+  const keyCol = document.getElementById('keyColumnSelect').value;
+  if (!keyCol) return;
+
+  let infoEl = document.getElementById('keyValuePreview');
+  if (!infoEl) {
+    const container = document.getElementById('keySelector');
+    container.insertAdjacentHTML('beforeend', '<div id="keyValuePreview" style="margin-top:8px;padding:8px;background:#f8f9fa;border:1px solid #e5e7eb;border-radius:6px;font-size:0.75rem;max-height:120px;overflow-y:auto;"></div>');
+    infoEl = document.getElementById('keyValuePreview');
+  }
+
+  // Show sample key values from both files
+  const bSamples = [];
+  const aSamples = [];
+  (beforeParsed?.data || []).slice(0, 5).forEach(r => {
+    const v = r[keyCol];
+    bSamples.push(v === undefined ? '<MISSING>' : (v || '').trim() ? v : '<empty>');
+  });
+  (afterParsed?.data || []).slice(0, 5).forEach(r => {
+    const v = r[keyCol];
+    aSamples.push(v === undefined ? '<MISSING>' : (v || '').trim() ? v : '<empty>');
+  });
+
+  let html = `<b>Key column preview: "${esc(keyCol)}"</b><br>`;
+  html += `<span style="color:#1e40af;">Before file (first 5):</span> ${bSamples.map(s => `<code>${esc(String(s).substring(0,30))}</code>`).join(', ')}<br>`;
+  html += `<span style="color:#1e40af;">After file (first 5):</span> ${aSamples.map(s => `<code>${esc(String(s).substring(0,30))}</code>`).join(', ')}`;
+
+  // Also check if key exists in records at all
+  if (beforeParsed?.data?.length > 0 && !(keyCol in beforeParsed.data[0])) {
+    html += `<br><span style="color:#dc2626;font-weight:bold;">ERROR: Key "${esc(keyCol)}" NOT FOUND in before data record keys!</span>`;
+    html += `<br>Available keys: ${Object.keys(beforeParsed.data[0]).map(k => `"${esc(k)}"`).join(', ')}`;
+  }
+  if (afterParsed?.data?.length > 0 && !(keyCol in afterParsed.data[0])) {
+    html += `<br><span style="color:#dc2626;font-weight:bold;">ERROR: Key "${esc(keyCol)}" NOT FOUND in after data record keys!</span>`;
+  }
+
+  infoEl.innerHTML = html;
 }
 
 async function setLayout(mode) {
@@ -1239,6 +1282,26 @@ async function runComparison() {
       btn.disabled = false;
       btn.innerHTML = 'Run Comparison';
       return;
+    }
+
+    // Show diagnostic info if 0 results
+    if (data.summary && data.summary.total === 0 && data.diagnostic) {
+      const d = data.diagnostic;
+      console.error('[ComprisonTool] DIAGNOSTIC:', JSON.stringify(d, null, 2));
+      let msg = `Comparison returned 0 results!\n\n`;
+      msg += `Key column: "${keyCol}"\n`;
+      msg += `Before: ${d.beforeKeyNonEmpty} non-empty key values out of ${(beforeParsed.data||[]).length} records\n`;
+      msg += `After: ${d.afterKeyNonEmpty} non-empty key values out of ${(afterParsed.data||[]).length} records\n\n`;
+      if (d.sampleBeforeKeyValues) {
+        msg += `Sample key values (before): ${JSON.stringify(d.sampleBeforeKeyValues.slice(0,3))}\n`;
+      }
+      if (d.sampleAfterKeyValues) {
+        msg += `Sample key values (after): ${JSON.stringify(d.sampleAfterKeyValues.slice(0,3))}\n`;
+      }
+      if (d.beforeRecordKeys) {
+        msg += `\nAvailable fields in records: ${d.beforeRecordKeys.join(', ')}\n`;
+      }
+      alert(msg);
     }
 
     comparisonResult = data;

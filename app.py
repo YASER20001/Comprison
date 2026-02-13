@@ -108,9 +108,49 @@ def compare():
 
     all_columns = list(dict.fromkeys(before_headers + after_headers))
 
+    # Diagnostic: check key column values before comparison
+    before_key_vals = [stringify(r.get(key_column, "")) for r in before_data]
+    after_key_vals = [stringify(r.get(key_column, "")) for r in after_data]
+    before_non_empty = [v for v in before_key_vals if v]
+    after_non_empty = [v for v in after_key_vals if v]
+
+    print(f"[COMPARE] Key '{key_column}': before has {len(before_non_empty)}/{len(before_data)} non-empty, after has {len(after_non_empty)}/{len(after_data)} non-empty")
+    if before_non_empty:
+        print(f"[COMPARE] Sample before keys: {before_non_empty[:3]}")
+    if after_non_empty:
+        print(f"[COMPARE] Sample after keys: {after_non_empty[:3]}")
+
+    # If key column has 0 values, check if the key exists in record keys at all
+    if not before_non_empty and before_data:
+        record_keys = list(before_data[0].keys())
+        print(f"[COMPARE] WARNING: Key column '{key_column}' has NO values in before data!")
+        print(f"[COMPARE] Available record keys: {record_keys}")
+        # Check for similar key names (case/whitespace differences)
+        for k in record_keys:
+            if k.strip().lower() == key_column.strip().lower() and k != key_column:
+                print(f"[COMPARE] FOUND similar key: '{k}' vs requested '{key_column}'")
+
     result = compare_datasets(before_data, after_data, key_column, all_columns)
     result["beforeFileName"] = before_name
     result["afterFileName"] = after_name
+
+    # If 0 results, include diagnostic info in response
+    if result["summary"]["total"] == 0:
+        # Gather diagnostic info
+        diag_keys = list(before_data[0].keys()) if before_data else []
+        diag_sample = {}
+        if before_data:
+            for k, v in before_data[0].items():
+                diag_sample[k] = v[:50] if isinstance(v, str) and len(v) > 50 else v
+        result["diagnostic"] = {
+            "message": f"Key column '{key_column}' produced 0 matches",
+            "beforeKeyNonEmpty": len(before_non_empty),
+            "afterKeyNonEmpty": len(after_non_empty),
+            "beforeRecordKeys": diag_keys,
+            "sampleRecord": diag_sample,
+            "sampleBeforeKeyValues": before_key_vals[:5],
+            "sampleAfterKeyValues": after_key_vals[:5],
+        }
 
     # Store for export
     session_id = str(uuid.uuid4())
