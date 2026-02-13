@@ -333,7 +333,7 @@ def _detect_header_block(ws, merge_map, max_scan=25):
 
 def _extract_preview_rows(ws, merge_map, num_rows=12):
     """Extract the first N rows as raw values for preview in the UI."""
-    max_col = min(ws.max_column or 1, 60)
+    max_col = ws.max_column or 1
     preview = []
     for r in range(1, min((ws.max_row or 1) + 1, num_rows + 1)):
         row_vals = []

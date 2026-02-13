@@ -477,6 +477,31 @@
     /* ── Animations ── */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+    /* ── Column Picker ── */
+    .col-picker-grid {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+      max-height: 320px; overflow-y: auto; padding: 4px 0;
+    }
+    .col-check {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 8px;
+      background: #fff; cursor: pointer; transition: all 0.15s;
+      font-size: 0.78rem; user-select: none;
+    }
+    .col-check:hover { border-color: var(--blue); background: #f0f7ff; }
+    .col-check.checked { border-color: var(--navy); background: var(--light-blue); }
+    .col-check input[type="checkbox"] { accent-color: var(--navy); cursor: pointer; }
+    .col-picker-actions {
+      display: flex; gap: 10px; margin-top: 10px; align-items: center;
+    }
+    .col-picker-actions button {
+      padding: 6px 14px; border-radius: 8px; border: 1px solid #d1d5db;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      background: #fff; color: #374151; transition: all 0.15s;
+    }
+    .col-picker-actions button:hover { background: var(--light-grey); }
+    .col-picker-actions .count { font-size: 0.75rem; color: #6b7280; }
+
     /* ── Hide sections ── */
     .hidden { display: none !important; }
   </style>
@@ -566,6 +591,21 @@
         </select>
       </div>
       <table id="previewTable" style="border-collapse:collapse;font-size:0.7rem;width:100%;background:#fff;"></table>
+    </div>
+
+    <!-- Column Picker -->
+    <div class="key-selector hidden" id="columnPicker">
+      <h3>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Select Columns to Compare
+      </h3>
+      <p>Choose which columns to include in the comparison. Uncheck columns you want to exclude.</p>
+      <div class="col-picker-actions">
+        <button onclick="toggleAllColumns(true)">Select All</button>
+        <button onclick="toggleAllColumns(false)">Deselect All</button>
+        <span class="count" id="colPickerCount">0 of 0 selected</span>
+      </div>
+      <div class="col-picker-grid" id="colPickerGrid"></div>
     </div>
 
     <!-- Key Column Selector -->
@@ -673,6 +713,7 @@ let afterParsed = null;
 let beforeFile = null;  // The actual File object for re-parsing
 let afterFile = null;
 let selectedHeaderRow = {};  // {before: "1", after: "1"}
+let selectedColumns = [];    // columns selected for comparison
 let comparisonResult = null;
 let sessionId = null;
 let currentFilter = 'all';
@@ -776,13 +817,91 @@ function checkReady() {
     showPreview();
   }
 
+  updateColumnPicker();
+}
+
+function updateColumnPicker() {
+  if (!beforeParsed || !afterParsed) return;
+
+  // All unique columns from both files
+  const allCols = [];
+  const seen = new Set();
+  [...beforeParsed.headers, ...afterParsed.headers].forEach(h => {
+    if (!seen.has(h)) { seen.add(h); allCols.push(h); }
+  });
+
+  if (allCols.length === 0) {
+    document.getElementById('columnPicker').classList.add('hidden');
+    return;
+  }
+
+  // Default: select all columns
+  selectedColumns = [...allCols];
+
+  renderColumnPicker(allCols);
+  document.getElementById('columnPicker').classList.remove('hidden');
   updateKeyColumns();
+}
+
+function renderColumnPicker(allCols) {
+  const grid = document.getElementById('colPickerGrid');
+  grid.innerHTML = allCols.map(col => {
+    const checked = selectedColumns.includes(col) ? 'checked' : '';
+    const cls = checked ? 'col-check checked' : 'col-check';
+    return `<label class="${cls}">
+      <input type="checkbox" value="${esc(col)}" ${checked} onchange="onColumnToggle(this)" />
+      ${esc(col)}
+    </label>`;
+  }).join('');
+  updateColPickerCount(allCols.length);
+}
+
+function onColumnToggle(cb) {
+  const col = cb.value;
+  const label = cb.parentElement;
+  if (cb.checked) {
+    if (!selectedColumns.includes(col)) selectedColumns.push(col);
+    label.classList.add('checked');
+  } else {
+    selectedColumns = selectedColumns.filter(c => c !== col);
+    label.classList.remove('checked');
+  }
+  updateColPickerCount();
+  updateKeyColumns();
+}
+
+function toggleAllColumns(selectAll) {
+  if (!beforeParsed || !afterParsed) return;
+  const allCols = [];
+  const seen = new Set();
+  [...beforeParsed.headers, ...afterParsed.headers].forEach(h => {
+    if (!seen.has(h)) { seen.add(h); allCols.push(h); }
+  });
+
+  selectedColumns = selectAll ? [...allCols] : [];
+  renderColumnPicker(allCols);
+  updateKeyColumns();
+}
+
+function updateColPickerCount(total) {
+  const allCols = [];
+  const seen = new Set();
+  if (beforeParsed && afterParsed) {
+    [...beforeParsed.headers, ...afterParsed.headers].forEach(h => {
+      if (!seen.has(h)) { seen.add(h); allCols.push(h); }
+    });
+  }
+  const t = total || allCols.length;
+  document.getElementById('colPickerCount').textContent = `${selectedColumns.length} of ${t} selected`;
 }
 
 function updateKeyColumns() {
   if (!beforeParsed || !afterParsed) return;
 
-  const common = beforeParsed.headers.filter(h => afterParsed.headers.includes(h));
+  // Only show columns that are selected AND common to both files
+  const common = selectedColumns.filter(
+    h => beforeParsed.headers.includes(h) && afterParsed.headers.includes(h)
+  );
   if (common.length === 0) {
     document.getElementById('keySelector').classList.add('hidden');
     document.getElementById('compareBtnWrap').classList.add('hidden');
@@ -863,7 +982,7 @@ async function selectHeaderRow(rowNum, which) {
     `;
 
     showPreview();
-    updateKeyColumns();
+    updateColumnPicker();
   } catch (err) {
     alert('Re-parse failed: ' + err.message);
   }
@@ -886,8 +1005,8 @@ async function runComparison() {
         beforeData: beforeParsed.data,
         afterData: afterParsed.data,
         keyColumn: keyCol,
-        beforeHeaders: beforeParsed.headers,
-        afterHeaders: afterParsed.headers,
+        beforeHeaders: beforeParsed.headers.filter(h => selectedColumns.includes(h)),
+        afterHeaders: afterParsed.headers.filter(h => selectedColumns.includes(h)),
         beforeFileName: beforeParsed.fileName,
         afterFileName: afterParsed.fileName,
       }),
@@ -1239,6 +1358,7 @@ function resetAll() {
   beforeFile = null;
   afterFile = null;
   selectedHeaderRow = {};
+  selectedColumns = [];
   comparisonResult = null;
   sessionId = null;
   currentFilter = 'all';
@@ -1251,6 +1371,7 @@ function resetAll() {
   document.getElementById('keySelector').classList.add('hidden');
   document.getElementById('compareBtnWrap').classList.add('hidden');
   document.getElementById('headerPreview').classList.add('hidden');
+  document.getElementById('columnPicker').classList.add('hidden');
 
   // Reset drop zones
   document.getElementById('dropBefore').classList.remove('done');
