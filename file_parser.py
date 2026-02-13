@@ -103,15 +103,16 @@ def _strategy_tables(ws):
 
 def _strategy_formatting(ws, merge_map, max_scan=15):
     """
-    Strategy 3: Cell formatting (bold font, background fill, borders).
-    Header rows typically have bold text and/or colored backgrounds.
-    Find the block of rows at the top with distinctive formatting.
+    Strategy 3: Cell formatting (bold font, background fill).
+    Header rows typically have DIFFERENT formatting than data rows.
+    We look for formatting that is present in the top rows but NOT in
+    subsequent data rows — the transition point marks the end of headers.
     Returns (header_start, header_end) or None.
     """
     max_col = min(ws.max_column or 1, 50)
     max_row = min(ws.max_row or 1, max_scan)
 
-    row_format_scores = []
+    row_scores = []
     for r in range(1, max_row + 1):
         bold_count = 0
         fill_count = 0
@@ -123,52 +124,54 @@ def _strategy_formatting(ws, merge_map, max_scan=15):
             if val is not None and str(val).strip():
                 non_empty += 1
 
-            # Check bold
             if cell.font and cell.font.bold:
                 bold_count += 1
 
-            # Check background fill (not default/no fill)
             if cell.fill and cell.fill.fgColor and cell.fill.fgColor.rgb:
                 rgb = str(cell.fill.fgColor.rgb)
-                # Skip default/no fill values
                 if rgb not in ("00000000", "0", "None", "00FFFFFF"):
                     fill_count += 1
 
-        # Score: how "header-like" is this row?
         score = 0
         if non_empty > 0:
-            bold_ratio = bold_count / max(non_empty, 1)
-            fill_ratio = fill_count / max(non_empty, 1)
-            if bold_ratio >= 0.5:
+            if bold_count / max(non_empty, 1) >= 0.5:
                 score += 2
-            if fill_ratio >= 0.3:
+            if fill_count / max(non_empty, 1) >= 0.3:
                 score += 2
             if bold_count >= 3:
                 score += 1
             if fill_count >= 3:
                 score += 1
 
-        row_format_scores.append({
-            "row": r,
-            "score": score,
-            "non_empty": non_empty,
-            "bold": bold_count,
-            "fill": fill_count,
+        row_scores.append({
+            "row": r, "score": score, "non_empty": non_empty,
+            "bold": bold_count, "fill": fill_count,
         })
 
-    # Find contiguous block of "formatted" rows at the top
+    # Look for a formatting TRANSITION: rows where the score DROPS.
+    # If ALL rows have the same high score, there's no useful signal.
     header_start = None
     header_end = None
-    for info in row_format_scores:
+    total_scored = sum(1 for s in row_scores if s["score"] >= 2 and s["non_empty"] > 0)
+    total_nonempty = sum(1 for s in row_scores if s["non_empty"] > 0)
+
+    # If all non-empty rows have the same formatting, no signal
+    if total_nonempty > 0 and total_scored == total_nonempty:
+        return None
+
+    for i, info in enumerate(row_scores):
         if info["score"] >= 2 and info["non_empty"] > 0:
             if header_start is None:
                 header_start = info["row"]
             header_end = info["row"]
         elif header_start is not None:
-            # Gap in formatting — stop
+            if info["non_empty"] == 0 and (header_end - header_start + 1) <= 2:
+                continue
             break
 
     if header_start is not None and header_end is not None:
+        if (header_end - header_start + 1) > MAX_HEADER_ROWS:
+            return None
         return header_start, header_end
     return None
 
@@ -177,31 +180,35 @@ def _strategy_merges(ws, merge_map, max_scan=25):
     """
     Strategy 4: Merged cell patterns.
     Header rows have horizontal/vertical merges. Data rows don't.
+    Only considers merges that START within the first MAX_HEADER_ROWS+2 rows
+    to avoid being fooled by merges in the data area.
     Returns (header_start, header_end) or None.
     """
     max_col = ws.max_column or 1
+    merge_row_limit = MAX_HEADER_ROWS + 2  # Only look at merges starting in top rows
 
     h_merges = {}
     v_merges = {}
     for merged_range in ws.merged_cells.ranges:
         min_col, min_row, max_col_r, max_row_r = range_boundaries(str(merged_range))
+        # Only consider merges that START in the top rows
+        if min_row > merge_row_limit:
+            continue
+        # Clamp the end row to merge_row_limit
+        clamped_max_row = min(max_row_r, merge_row_limit)
         if max_col_r > min_col:
-            for r in range(min_row, max_row_r + 1):
+            for r in range(min_row, clamped_max_row + 1):
                 h_merges.setdefault(r, []).append((min_col, max_col_r, min_row, max_row_r))
         if max_row_r > min_row:
-            for r in range(min_row, max_row_r + 1):
+            for r in range(min_row, clamped_max_row + 1):
                 v_merges.setdefault(r, []).append((min_col, max_col_r, min_row, max_row_r))
 
     all_merge_rows = set(h_merges.keys()) | set(v_merges.keys())
     if not all_merge_rows:
         return None
 
-    merge_rows_in_range = [r for r in all_merge_rows if r <= max_scan]
-    if not merge_rows_in_range:
-        return None
-
-    header_start = min(merge_rows_in_range)
-    header_end = max(merge_rows_in_range)
+    header_start = min(all_merge_rows)
+    header_end = max(all_merge_rows)
 
     # Skip title rows: single horizontal merge spanning >70% of columns
     while header_start < header_end:
@@ -225,6 +232,10 @@ def _strategy_merges(ws, merge_map, max_scan=25):
         if has_content:
             break
         header_start += 1
+
+    # Final sanity check
+    if (header_end - header_start + 1) > MAX_HEADER_ROWS:
+        return None
 
     return header_start, header_end
 
@@ -252,6 +263,19 @@ def _strategy_content_pattern(ws, merge_map, max_scan=20):
     return 1, 1
 
 
+MAX_HEADER_ROWS = 8  # No real spreadsheet has more than ~5 header rows
+
+
+def _validate_result(result):
+    """Reject a strategy result if the header span is unreasonably large."""
+    if result is None:
+        return None
+    start, end = result
+    if (end - start + 1) > MAX_HEADER_ROWS:
+        return None  # Reject — too many rows to be a real header
+    return result
+
+
 def _detect_header_block(ws, merge_map, max_scan=25):
     """
     Multi-strategy header detection. Tries strategies in order of reliability:
@@ -261,22 +285,21 @@ def _detect_header_block(ws, merge_map, max_scan=25):
     4. Merged cell patterns (horizontal merges = group headers)
     5. Content pattern fallback (first row with 3+ values)
 
+    All results are validated: max 8 header rows. Any strategy returning
+    more than that is rejected (likely detecting the whole sheet as headers).
+
     Returns (header_start_row, header_end_row) — both 1-indexed inclusive.
     """
     # Strategy 1: AutoFilter
     result = _strategy_autofilter(ws)
     if result:
-        # AutoFilter gives us the header row. But there may be group header
-        # rows ABOVE it (with merges). Check if merges extend above.
         af_start, af_end = result
-        merge_result = _strategy_merges(ws, merge_map, max_scan)
+        # Check if merges extend above the autofilter row (group headers)
+        merge_result = _validate_result(_strategy_merges(ws, merge_map, max_scan))
         if merge_result:
             m_start, m_end = merge_result
-            # If merges start before the autofilter row and end at or after it,
-            # use the merge range as the full header block
             if m_start <= af_start and m_end >= af_start:
                 return m_start, m_end
-            # If merges are entirely above the autofilter, include them
             if m_end < af_start:
                 return m_start, af_end
         return result
@@ -286,13 +309,13 @@ def _detect_header_block(ws, merge_map, max_scan=25):
     if result:
         return result
 
-    # Strategy 3: Cell formatting
-    result = _strategy_formatting(ws, merge_map)
+    # Strategy 3: Cell formatting (with validation)
+    result = _validate_result(_strategy_formatting(ws, merge_map))
     if result:
         return result
 
-    # Strategy 4: Merged cell patterns
-    result = _strategy_merges(ws, merge_map, max_scan)
+    # Strategy 4: Merged cell patterns (with validation)
+    result = _validate_result(_strategy_merges(ws, merge_map, max_scan))
     if result:
         return result
 
