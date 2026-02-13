@@ -958,8 +958,47 @@ function updateKeyColumns() {
     return;
   }
 
+  // Analyze each candidate key column: count unique non-empty values
+  const keyStats = common.map(col => {
+    const bVals = new Set();
+    const aVals = new Set();
+    (beforeParsed.data || []).forEach(r => {
+      const v = (r[col] || '').trim();
+      if (v) bVals.add(v);
+    });
+    (afterParsed.data || []).forEach(r => {
+      const v = (r[col] || '').trim();
+      if (v) aVals.add(v);
+    });
+    return { col, bUnique: bVals.size, aUnique: aVals.size, total: bVals.size + aVals.size };
+  });
+
+  // Sort by total unique values (best key first)
+  keyStats.sort((a, b) => b.total - a.total);
+
   const sel = document.getElementById('keyColumnSelect');
-  sel.innerHTML = common.map(c => `<option value="${c}">${esc(c)}</option>`).join('');
+  sel.innerHTML = keyStats.map(s => {
+    const badge = s.total === 0
+      ? '(no values!)'
+      : `(${s.bUnique} / ${s.aUnique} unique)`;
+    const recommended = s === keyStats[0] ? ' - RECOMMENDED' : '';
+    return `<option value="${s.col}">${esc(s.col)} ${badge}${recommended}</option>`;
+  }).join('');
+
+  // Show key column stats info
+  const best = keyStats[0];
+  let keyInfo = document.getElementById('keyColumnInfo');
+  if (!keyInfo) {
+    const container = document.getElementById('keySelector');
+    container.insertAdjacentHTML('beforeend', '<div id="keyColumnInfo" style="margin-top:8px;font-size:0.75rem;"></div>');
+    keyInfo = document.getElementById('keyColumnInfo');
+  }
+  if (best.total > 0) {
+    keyInfo.innerHTML = `<span style="color:#166534;">Best key: <b>${esc(best.col)}</b> with ${best.bUnique} unique values in before, ${best.aUnique} in after</span>`;
+  } else {
+    keyInfo.innerHTML = `<span style="color:#991b1b;">Warning: No column has unique values. Comparison may return 0 results.</span>`;
+  }
+
   document.getElementById('keySelector').classList.remove('hidden');
   document.getElementById('compareBtnWrap').classList.remove('hidden');
 }
@@ -1153,6 +1192,22 @@ async function runComparison() {
   const keyCol = document.getElementById('keyColumnSelect').value;
   if (!keyCol) return;
 
+  // Validate key column has values
+  const bKeys = (beforeParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
+  const aKeys = (afterParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
+
+  console.log(`[ComprisonTool] Key column "${keyCol}": before has ${bKeys}/${beforeParsed.data.length} non-empty, after has ${aKeys}/${afterParsed.data.length} non-empty`);
+
+  if (bKeys === 0 && aKeys === 0) {
+    alert(`The key column "${keyCol}" has NO values in either file!\n\nThis means every record has an empty value for "${keyCol}", so nothing can be matched.\n\nPlease choose a different key column that has unique values (look for the RECOMMENDED option).`);
+    return;
+  }
+
+  if (bKeys === 0 || aKeys === 0) {
+    const which = bKeys === 0 ? 'Before' : 'After';
+    if (!confirm(`Warning: "${keyCol}" has 0 values in the ${which} file.\n\nAll records from ${which} will show as deleted/added.\n\nContinue anyway?`)) return;
+  }
+
   const btn = document.getElementById('compareBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Comparing Files...';
@@ -1170,7 +1225,7 @@ async function runComparison() {
     console.log(`[ComprisonTool] Comparing: before=${payload.beforeData.length} records, after=${payload.afterData.length} records, key="${keyCol}", headers=${payload.beforeHeaders.length}`);
     if (payload.beforeData.length > 0) {
       console.log('[ComprisonTool] Sample before record keys:', Object.keys(payload.beforeData[0]));
-      console.log('[ComprisonTool] Sample before key value:', payload.beforeData[0][keyCol]);
+      console.log('[ComprisonTool] Sample before key value:', JSON.stringify(payload.beforeData[0][keyCol]));
     }
     const resp = await fetch('/api/compare', {
       method: 'POST',
