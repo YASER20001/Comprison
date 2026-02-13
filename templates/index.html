@@ -577,12 +577,21 @@
     <div class="key-selector hidden" id="headerPreview" style="overflow-x:auto;">
       <h3>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
-        Verify Header Row
+        Select the Row That Contains Your Column Names
       </h3>
       <p style="margin-bottom:8px;">
-        Auto-detected header: <b id="detectedHeaderLabel">Row 1</b>.
-        If wrong, <b>click the correct header row</b> below. The selected row (green) becomes column names.
+        The green row below will be used as <b>column names</b> (headers).
+        If the wrong row is highlighted, <b>click the row that has your column names</b> (e.g. SIZE, DESCRIPTION, MATERIAL, etc.).
       </p>
+
+      <!-- Show detected columns prominently -->
+      <div id="detectedColsBox" style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+        <div style="font-size:0.7rem;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">
+          Detected Column Names (from row <span id="detectedHeaderLabel">1</span>):
+        </div>
+        <div id="detectedColsList" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
+
       <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
         <label style="font-size:0.75rem;font-weight:600;color:var(--navy);">File:</label>
         <select id="previewFileSelect" onchange="showPreview()" style="padding:6px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.8rem;">
@@ -594,7 +603,7 @@
       <div style="text-align:center;margin-top:14px;">
         <button class="compare-btn" style="padding:10px 28px;font-size:0.8rem;" onclick="confirmHeaderRow()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-          Confirm Header Row
+          Confirm Column Names
         </button>
       </div>
     </div>
@@ -934,13 +943,26 @@ function showPreview() {
   const hStart = parseInt(hParts[0]);
   const hEnd = parseInt(hParts[hParts.length - 1]);
 
-  document.getElementById('detectedHeaderLabel').textContent = `Row ${headerRowStr}`;
+  document.getElementById('detectedHeaderLabel').textContent = headerRowStr;
+
+  // Show detected column names prominently
+  const colNames = parsed.headers || [];
+  const colsBox = document.getElementById('detectedColsList');
+  if (colNames.length > 0) {
+    colsBox.innerHTML = colNames.map(c =>
+      `<span style="display:inline-block;padding:3px 10px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;font-size:0.75rem;font-weight:600;color:#166534;">${esc(c)}</span>`
+    ).join('');
+    // Color the box based on whether columns look correct
+    const box = document.getElementById('detectedColsBox');
+    box.style.background = '#f0fdf4';
+    box.style.borderColor = '#86efac';
+  }
 
   let html = '<tbody>';
   parsed.preview.forEach((row, idx) => {
     const rowNum = idx + 1;
     const isHeader = rowNum >= hStart && rowNum <= hEnd;
-    html += `<tr class="${isHeader ? 'selected-header' : ''}" onclick="selectHeaderRow(${rowNum}, '${which}')" title="Click to set row ${rowNum} as header">`;
+    html += `<tr class="${isHeader ? 'selected-header' : ''}" onclick="selectHeaderRow(${rowNum}, '${which}')" title="Click to use row ${rowNum} as column names">`;
     html += `<td class="row-num">${rowNum}</td>`;
     row.forEach(val => {
       html += `<td title="${esc(val)}">${esc(val) || '<span style="color:#ccc">—</span>'}</td>`;
