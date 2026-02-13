@@ -591,6 +591,12 @@
         </select>
       </div>
       <table id="previewTable" style="border-collapse:collapse;font-size:0.7rem;width:100%;background:#fff;"></table>
+      <div style="text-align:center;margin-top:14px;">
+        <button class="compare-btn" style="padding:10px 28px;font-size:0.8rem;" onclick="confirmHeaderRow()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          Confirm Header Row
+        </button>
+      </div>
     </div>
 
     <!-- Column Picker -->
@@ -817,7 +823,11 @@ function checkReady() {
     showPreview();
   }
 
-  updateColumnPicker();
+  // Don't show column picker or key selector yet — wait for header confirmation
+  // For non-Excel files (no preview), go straight to column picker
+  if (!beforeParsed.preview && !afterParsed.preview) {
+    updateColumnPicker();
+  }
 }
 
 function updateColumnPicker() {
@@ -982,10 +992,23 @@ async function selectHeaderRow(rowNum, which) {
     `;
 
     showPreview();
-    updateColumnPicker();
+    // Don't show column picker yet — user must click "Confirm Header Row"
   } catch (err) {
     alert('Re-parse failed: ' + err.message);
   }
+}
+
+function confirmHeaderRow() {
+  if (!beforeParsed || !afterParsed) return;
+
+  // If only one file's header was changed, re-parse the other with its current header too
+  // (both files should be re-parsed by now via selectHeaderRow or initial upload)
+
+  // Now show the column picker and key selector
+  updateColumnPicker();
+
+  // Scroll to column picker
+  document.getElementById('columnPicker').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ═══════ COMPARISON ═══════
