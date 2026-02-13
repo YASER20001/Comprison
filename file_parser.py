@@ -12,7 +12,7 @@ SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".tsv", ".jso
 MAX_HEADER_ROWS = 8
 
 
-def parse_file(filepath, filename, header_row=None):
+def parse_file(filepath, filename, header_row=None, transpose=False):
     """
     Parse an uploaded file and return structured data.
 
@@ -20,6 +20,7 @@ def parse_file(filepath, filename, header_row=None):
         filepath: path to the file
         filename: original filename
         header_row: optional override like "1" or "3-4" for header row(s)
+        transpose: if True, data is transposed (field names in column A, records in columns)
 
     Returns a dict with:
       - fileName: original filename
@@ -27,12 +28,12 @@ def parse_file(filepath, filename, header_row=None):
       - data: list of row dicts
       - sheetNames: list of sheet names (Excel only)
       - selectedSheet: active sheet name (Excel only)
-      - preview: first 12 rows as raw values (Excel only)
+      - preview: raw cell values for preview (Excel only)
     """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     if ext in ("xlsx", "xlsm", "xlsb"):
-        return _parse_excel_openpyxl(filepath, filename, header_row_override=header_row)
+        return _parse_excel_openpyxl(filepath, filename, header_row_override=header_row, transpose=transpose)
     elif ext == "xls":
         return _parse_excel_xls(filepath, filename)
     elif ext == "csv":
@@ -331,17 +332,67 @@ def _detect_header_block(ws, merge_map, max_scan=25):
 # EXCEL PARSING
 # ═══════════════════════════════════════════════════════════════════
 
-def _extract_preview_rows(ws, merge_map, num_rows=12):
+def _extract_preview_rows(ws, merge_map, num_rows=50):
     """Extract the first N rows as raw values for preview in the UI."""
     max_col = ws.max_column or 1
+    max_row = ws.max_row or 1
     preview = []
-    for r in range(1, min((ws.max_row or 1) + 1, num_rows + 1)):
+    for r in range(1, min(max_row + 1, num_rows + 1)):
         row_vals = []
         for c in range(1, max_col + 1):
             val = _get_merged_cell_value(ws, r, c, merge_map)
             row_vals.append(str(val).strip() if val is not None else "")
         preview.append(row_vals)
     return preview
+
+
+def _build_transposed_data(ws, merge_map):
+    """
+    Build headers and data from a transposed layout where:
+    - Column A contains field names (headers)
+    - Each subsequent column is a record
+    """
+    max_row = ws.max_row or 1
+    max_col = ws.max_column or 1
+
+    # Column A values = field names (headers)
+    headers = []
+    for r in range(1, max_row + 1):
+        val = _get_merged_cell_value(ws, r, 1, merge_map)
+        name = str(val).strip() if val is not None else ""
+        if not name:
+            name = f"Field_{r}"
+        headers.append(name)
+
+    # Strip trailing empty Field_N headers
+    while headers and headers[-1].startswith("Field_"):
+        headers.pop()
+    actual_rows = len(headers)
+
+    # Deduplicate headers
+    seen = {}
+    for i, h in enumerate(headers):
+        if h in seen:
+            seen[h] += 1
+            headers[i] = f"{h}_{seen[h]}"
+        else:
+            seen[h] = 0
+
+    # Each column (from 2 onwards) is one data record
+    data = []
+    for c in range(2, max_col + 1):
+        row_dict = {}
+        all_empty = True
+        for r in range(1, actual_rows + 1):
+            val = _get_merged_cell_value(ws, r, c, merge_map)
+            s = str(val).strip() if val is not None else ""
+            row_dict[headers[r - 1]] = s
+            if s:
+                all_empty = False
+        if not all_empty:
+            data.append(row_dict)
+
+    return headers, data
 
 
 def _build_headers_and_data(ws, merge_map, header_start, header_end):
@@ -396,10 +447,11 @@ def _build_headers_and_data(ws, merge_map, header_start, header_end):
     return headers, data
 
 
-def _parse_excel_openpyxl(filepath, filename, header_row_override=None):
+def _parse_excel_openpyxl(filepath, filename, header_row_override=None, transpose=False):
     """
     Parse Excel files using openpyxl to handle merged cells and multi-row headers.
     If header_row_override is provided (e.g. "3" or "3-4"), use that instead of auto-detect.
+    If transpose is True, field names are in column A and each column is a record.
     """
     wb = load_workbook(filepath, read_only=False, data_only=True)
     sheet_names = wb.sheetnames
@@ -407,19 +459,24 @@ def _parse_excel_openpyxl(filepath, filename, header_row_override=None):
 
     merge_map = _build_merge_map(ws)
 
-    # Determine header rows
-    if header_row_override:
-        # Parse "3" or "3-4"
-        parts = str(header_row_override).split("-")
-        header_start = int(parts[0])
-        header_end = int(parts[-1])
-    else:
-        header_start, header_end = _detect_header_block(ws, merge_map)
-
-    headers, data = _build_headers_and_data(ws, merge_map, header_start, header_end)
-
-    # Get preview rows for the UI (so user can see raw data and pick header row)
+    # Get preview rows for the UI (so user can see raw data)
     preview = _extract_preview_rows(ws, merge_map)
+
+    if transpose:
+        # Transposed layout: column A = field names, each other column = a record
+        headers, data = _build_transposed_data(ws, merge_map)
+        header_info = "transposed"
+    else:
+        # Normal layout: detect or use override for header row
+        if header_row_override:
+            parts = str(header_row_override).split("-")
+            header_start = int(parts[0])
+            header_end = int(parts[-1])
+        else:
+            header_start, header_end = _detect_header_block(ws, merge_map)
+
+        headers, data = _build_headers_and_data(ws, merge_map, header_start, header_end)
+        header_info = f"{header_start}-{header_end}"
 
     wb.close()
 
@@ -431,8 +488,9 @@ def _parse_excel_openpyxl(filepath, filename, header_row_override=None):
         "selectedSheet": sheet_names[0],
         "rowCount": len(data),
         "colCount": len(headers),
-        "headerRows": f"{header_start}-{header_end}",
+        "headerRows": header_info,
         "preview": preview,
+        "transposed": transpose,
     }
 
 

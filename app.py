@@ -58,7 +58,7 @@ def upload_file():
 
 @app.route("/api/reparse", methods=["POST"])
 def reparse_file():
-    """Re-parse an already uploaded file with a different header row."""
+    """Re-parse an already uploaded file with a different header row or transpose mode."""
     body = request.get_json()
     if not body:
         return jsonify({"error": "JSON body required"}), 400
@@ -66,12 +66,13 @@ def reparse_file():
     filepath = body.get("filepath")
     filename = body.get("filename")
     header_row = body.get("headerRow")
+    transpose = body.get("transpose", False)
 
     if not filepath or not os.path.exists(filepath):
         return jsonify({"error": "File not found. Please re-upload."}), 404
 
     try:
-        parsed = parse_file(filepath, filename, header_row=header_row)
+        parsed = parse_file(filepath, filename, header_row=header_row, transpose=transpose)
         parsed["_filepath"] = filepath
         return jsonify(parsed)
     except Exception as e:
