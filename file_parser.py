@@ -58,151 +58,108 @@ def _build_merge_map(ws):
     return merge_map
 
 
-def _is_numeric(val):
-    """Check if a value looks like numeric data."""
-    if val is None:
-        return False
-    sv = str(val).strip().replace(",", "")
-    if not sv:
-        return False
-    try:
-        float(sv)
-        return True
-    except ValueError:
-        return False
-
-
-def _row_cell_values(ws, r, max_col, merge_map):
-    """Get all cell values for a row, resolving merges."""
-    values = []
-    for c in range(1, max_col + 1):
-        val = _get_merged_cell_value(ws, r, c, merge_map)
-        values.append(val)
-    return values
-
-
-def _build_row_merge_info(ws, merge_map, max_col):
+def _get_horizontal_merges_by_row(ws):
     """
-    For each row, build a set of columns that are merge-masters (origin cells)
-    vs columns that are just part of a horizontal merge (filled by merge_map).
-    Returns a dict: row -> set of columns that hold DISTINCT values.
+    Find all horizontal merges (spanning multiple columns) and group by row.
+    Returns dict: row_number -> list of (min_col, max_col, min_row, max_row).
+    A row that participates in a horizontal merge is likely a header row.
     """
-    row_distinct_cols = {}
+    h_merges = {}
     for merged_range in ws.merged_cells.ranges:
-        min_col, min_row, max_col_r, max_row_r = range_boundaries(str(merged_range))
-        for r in range(min_row, max_row_r + 1):
-            if r not in row_distinct_cols:
-                row_distinct_cols[r] = set()
-            # Only the master cell is "distinct" for this row
-            row_distinct_cols[r].add(min_col)
-            # Mark all other cols in this merge as non-distinct for this row
-            for c in range(min_col + 1, max_col_r + 1):
-                row_distinct_cols.setdefault(r, set()).discard(c)
-    return row_distinct_cols
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
+        # Horizontal merge = spans multiple columns
+        if max_col > min_col:
+            for r in range(min_row, max_row + 1):
+                h_merges.setdefault(r, []).append((min_col, max_col, min_row, max_row))
+    return h_merges
 
 
-def _count_distinct_cells(ws, r, max_col, merge_map):
+def _get_vertical_merges_by_row(ws):
     """
-    Count the number of DISTINCT non-empty values in a row.
-    Merged cells that span multiple columns count as 1, not N.
-    Returns (distinct_text, distinct_numeric, distinct_total).
+    Find all vertical merges (spanning multiple rows) and group by row.
+    Returns dict: row_number -> list of (min_col, max_col, min_row, max_row).
     """
-    seen_values = set()
-    text_count = 0
-    numeric_count = 0
-
-    for c in range(1, max_col + 1):
-        # Skip cells that are part of a horizontal merge (not the master)
-        if (r, c) in merge_map:
-            master_r, master_c = merge_map[(r, c)]
-            # If the master is on the SAME row, this is a horizontal merge — skip
-            if master_r == r:
-                continue
-            # If master is on a DIFFERENT row, this is a vertical merge — use value
-
-        val = _get_merged_cell_value(ws, r, c, merge_map)
-        if val is not None and str(val).strip():
-            sv = str(val).strip()
-            # Avoid counting the same value multiple times from vertical merges
-            cell_key = (c, sv)
-            if cell_key in seen_values:
-                continue
-            seen_values.add(cell_key)
-
-            if _is_numeric(val):
-                numeric_count += 1
-            else:
-                text_count += 1
-
-    return text_count, numeric_count, text_count + numeric_count
+    v_merges = {}
+    for merged_range in ws.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
+        if max_row > min_row:
+            for r in range(min_row, max_row + 1):
+                v_merges.setdefault(r, []).append((min_col, max_col, min_row, max_row))
+    return v_merges
 
 
-def _detect_header_block(ws, merge_map, max_scan=20):
+def _detect_header_block(ws, merge_map, max_scan=25):
     """
     Auto-detect where the header block starts and ends.
 
     Returns (header_start_row, header_end_row) — both 1-indexed inclusive.
     Data starts at header_end_row + 1.
 
-    Strategy:
-    1. Profile each row counting DISTINCT values (merged spans count as 1)
-    2. Skip title rows (rows with very few distinct values like 1-2)
-    3. Find the densest text-heavy row = likely the bottom header row
-    4. Walk backwards to find where header block starts
+    Primary strategy: use MERGED CELL PATTERNS.
+    - Header rows have horizontal merges (group headers spanning columns).
+    - Header rows also have vertical merges (labels spanning rows).
+    - Data rows almost never have horizontal merges.
+    - The header block = all rows involved in any merge, up to the last merge row.
+
+    Fallback: if no merges, use the first row as header.
     """
     max_col = ws.max_column or 1
+
+    h_merges = _get_horizontal_merges_by_row(ws)
+    v_merges = _get_vertical_merges_by_row(ws)
+
+    # Combine: rows that participate in ANY merge (horizontal or vertical)
+    all_merge_rows = set(h_merges.keys()) | set(v_merges.keys())
+
+    if all_merge_rows:
+        # The header block is from the first merge row to the last merge row
+        # (within a reasonable scan range)
+        merge_rows_in_range = [r for r in all_merge_rows if r <= max_scan]
+        if merge_rows_in_range:
+            header_start = min(merge_rows_in_range)
+            header_end = max(merge_rows_in_range)
+
+            # Sanity check: if header_start is row 1 and it's a single merged
+            # title spanning ALL columns with only 1 value, skip it.
+            # A title row = 1 horizontal merge spanning most of the sheet.
+            while header_start < header_end:
+                merges_on_row = h_merges.get(header_start, [])
+                if len(merges_on_row) == 1:
+                    mc_min, mc_max, _, _ = merges_on_row[0]
+                    span = mc_max - mc_min + 1
+                    # If this single merge covers > 70% of columns, it's a title row
+                    if span > max_col * 0.7:
+                        header_start += 1
+                        continue
+                break
+
+            # Also skip blank rows at the start
+            while header_start < header_end:
+                has_content = False
+                for c in range(1, max_col + 1):
+                    val = _get_merged_cell_value(ws, header_start, c, merge_map)
+                    if val is not None and str(val).strip():
+                        has_content = True
+                        break
+                if has_content:
+                    break
+                header_start += 1
+
+            return header_start, header_end
+
+    # FALLBACK: No merges found. Use row content analysis.
+    # Find the first row with content — that's the header.
     max_row = min(ws.max_row or 1, max_scan)
-
-    profiles = []
     for r in range(1, max_row + 1):
-        text, numeric, total = _count_distinct_cells(ws, r, max_col, merge_map)
-        profiles.append({
-            "row": r,
-            "text": text,
-            "numeric": numeric,
-            "total": total,
-        })
+        non_empty = 0
+        for c in range(1, max_col + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and str(val).strip():
+                non_empty += 1
+        if non_empty >= 3:
+            return r, r
 
-    # Find the row with the MOST distinct text cells.
-    # This is the "densest header row" — the row with all individual column names.
-    # Require at least 3 distinct cells to avoid picking up title rows.
-    densest_row_idx = 0
-    densest_text = 0
-    for i, p in enumerate(profiles):
-        if p["text"] > densest_text and p["text"] >= p["numeric"] and p["total"] >= 3:
-            densest_text = p["text"]
-            densest_row_idx = i
-
-    header_end = profiles[densest_row_idx]["row"]
-
-    # Walk backwards to find header start (skip blank/title rows)
-    header_start = header_end
-    for i in range(densest_row_idx - 1, -1, -1):
-        p = profiles[i]
-        if p["total"] == 0:
-            break  # blank row
-        if p["total"] <= 2 and p["text"] <= 2:
-            break  # title row (only 1-2 values like a merged title)
-        if p["numeric"] > p["text"]:
-            break  # data row
-        if p["text"] >= 2:
-            header_start = p["row"]
-        else:
-            break
-
-    # Walk forward from densest to catch any sub-header rows below
-    for i in range(densest_row_idx + 1, len(profiles)):
-        p = profiles[i]
-        if p["total"] == 0:
-            break
-        if p["numeric"] > 0 and p["numeric"] >= p["text"]:
-            break  # data row
-        if p["text"] >= 2 and p["numeric"] == 0:
-            header_end = p["row"]  # still a header row
-        else:
-            break
-
-    return header_start, header_end
+    return 1, 1
 
 
 def _parse_excel_openpyxl(filepath, filename):
