@@ -107,5 +107,64 @@ def export_excel(session_id):
     )
 
 
+@app.route("/debug")
+def debug_page():
+    return render_template("debug.html")
+
+
+@app.route("/api/debug-upload", methods=["POST"])
+def debug_upload():
+    """Debug endpoint: shows raw cell values for the first 15 rows of an Excel file."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    uid = str(uuid.uuid4())
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "xlsx"
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"{uid}.{ext}")
+    file.save(filepath)
+
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.utils import range_boundaries
+        from file_parser import _build_merge_map, _get_merged_cell_value
+
+        wb = load_workbook(filepath, read_only=False, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        merge_map = _build_merge_map(ws)
+
+        max_col = min(ws.max_column or 1, 30)
+        max_row = min(ws.max_row or 1, 15)
+
+        rows = []
+        for r in range(1, max_row + 1):
+            cells = []
+            for c in range(1, max_col + 1):
+                raw = ws.cell(row=r, column=c).value
+                resolved = _get_merged_cell_value(ws, r, c, merge_map)
+                cells.append({
+                    "col": c,
+                    "raw": str(raw) if raw is not None else None,
+                    "resolved": str(resolved) if resolved is not None else None,
+                })
+            rows.append({"row": r, "cells": cells})
+
+        # Show merged ranges
+        merges = [str(m) for m in ws.merged_cells.ranges]
+        wb.close()
+        os.remove(filepath)
+
+        return jsonify({
+            "sheetName": wb.sheetnames[0] if wb.sheetnames else "",
+            "maxRow": ws.max_row,
+            "maxCol": ws.max_column,
+            "mergedRanges": merges,
+            "rows": rows,
+        })
+    except Exception as e:
+        os.remove(filepath)
+        return jsonify({"error": str(e)}), 400
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
