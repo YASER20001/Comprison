@@ -346,21 +346,108 @@ def _extract_preview_rows(ws_data, merge_map, num_rows=50, ws_raw=None):
     return preview
 
 
-def _build_transposed_data_robust(ws_data, ws_raw, merge_map):
+def _build_transposed_data_robust(ws_data, ws_raw, merge_map, filepath=None):
     """
     Build headers and data from a transposed layout where:
     - Column A contains field names (headers)
     - Each subsequent column is a record
 
-    Uses _get_robust_value which tries BOTH data_only=True and data_only=False
-    workbooks to catch all cell values including formulas without cached results.
+    Tries multiple reading strategies:
+    1. calamine engine (Rust-based, handles external data better)
+    2. pandas openpyxl engine
+    3. openpyxl cell-by-cell with dual workbook loading
     """
     max_row = ws_data.max_row or 1
     max_col = ws_data.max_column or 1
 
     print(f"[TRANSPOSE] Sheet dimensions: max_row={max_row}, max_col={max_col}")
 
-    # Column A values = field names (headers)
+    # ── TRY CALAMINE FIRST (handles more Excel edge cases) ──
+    if filepath:
+        for engine in ['calamine', 'openpyxl']:
+            try:
+                df = pd.read_excel(filepath, header=None, sheet_name=0, engine=engine)
+                print(f"[TRANSPOSE-{engine}] DataFrame shape: {df.shape}")
+
+                max_row_pd = len(df)
+                max_col_pd = len(df.columns)
+
+                # Column 0 = field names
+                headers = []
+                for r in range(max_row_pd):
+                    val = df.iloc[r, 0]
+                    name = str(val).strip() if pd.notna(val) and str(val).strip() not in ("nan", "") else ""
+                    if not name:
+                        name = f"Field_{r + 1}"
+                    headers.append(name)
+
+                # Strip trailing empty Field_N
+                while headers and headers[-1].startswith("Field_"):
+                    headers.pop()
+                actual_rows = len(headers)
+
+                print(f"[TRANSPOSE-{engine}] actual_rows={actual_rows}, headers={headers}")
+
+                # Deduplicate
+                seen = {}
+                for i, h in enumerate(headers):
+                    if h in seen:
+                        seen[h] += 1
+                        headers[i] = f"{h}_{seen[h]}"
+                    else:
+                        seen[h] = 0
+
+                # Build data
+                data = []
+                empty_cols = 0
+                for c in range(1, max_col_pd):
+                    row_dict = {}
+                    all_empty = True
+                    for r in range(actual_rows):
+                        val = df.iloc[r, c]
+                        s = str(val).strip() if pd.notna(val) and str(val).strip() not in ("nan", "") else ""
+                        row_dict[headers[r]] = s
+                        if s:
+                            all_empty = False
+                    if not all_empty:
+                        data.append(row_dict)
+                    else:
+                        empty_cols += 1
+
+                # Check how many fields have values
+                if data:
+                    sample = data[0]
+                    non_empty = {k: v for k, v in sample.items() if v}
+                    empty_fields = [k for k, v in sample.items() if not v]
+                    print(f"[TRANSPOSE-{engine}] Record 1: {len(non_empty)}/{len(sample)} non-empty")
+                    for k, v in list(non_empty.items())[:5]:
+                        print(f"[TRANSPOSE-{engine}]   {k} = '{str(v)[:60]}'")
+                    if empty_fields:
+                        print(f"[TRANSPOSE-{engine}] Empty fields: {empty_fields}")
+
+                    # If this engine got more values than just 2-3 fields, use it
+                    if len(non_empty) > 3:
+                        print(f"[TRANSPOSE-{engine}] Using this engine (good coverage)")
+                        return headers, data
+                    else:
+                        print(f"[TRANSPOSE-{engine}] Only {len(non_empty)} fields have values, trying next engine...")
+                        continue
+                else:
+                    print(f"[TRANSPOSE-{engine}] No data records found, trying next engine...")
+                    continue
+
+            except Exception as e:
+                print(f"[TRANSPOSE-{engine}] Failed: {e}")
+                continue
+
+        # If we get here, all engines got poor results - use the last one anyway
+        print(f"[TRANSPOSE] All engines got sparse data. Using last result.")
+        if data:
+            return headers, data
+
+    # ── FALLBACK: OPENPYXL CELL-BY-CELL ──
+    print(f"[TRANSPOSE-openpyxl-cellbycell] Falling back to cell-by-cell reading")
+
     headers = []
     for r in range(1, max_row + 1):
         val = _get_robust_value(ws_data, ws_raw, r, 1, merge_map)
@@ -369,16 +456,12 @@ def _build_transposed_data_robust(ws_data, ws_raw, merge_map):
             name = f"Field_{r}"
         headers.append(name)
 
-    # Strip trailing empty Field_N headers
     while headers and headers[-1].startswith("Field_"):
         headers.pop()
     actual_rows = len(headers)
 
-    # Log ALL headers (not just first 10) to help debug missing fields
-    print(f"[TRANSPOSE] actual_rows={actual_rows}")
-    print(f"[TRANSPOSE] ALL headers: {headers}")
+    print(f"[TRANSPOSE-openpyxl-cellbycell] actual_rows={actual_rows}")
 
-    # Deduplicate headers
     seen = {}
     for i, h in enumerate(headers):
         if h in seen:
@@ -387,7 +470,6 @@ def _build_transposed_data_robust(ws_data, ws_raw, merge_map):
         else:
             seen[h] = 0
 
-    # Each column (from 2 onwards) is one data record
     data = []
     empty_cols = 0
     for c in range(2, max_col + 1):
@@ -404,16 +486,7 @@ def _build_transposed_data_robust(ws_data, ws_raw, merge_map):
         else:
             empty_cols += 1
 
-    print(f"[TRANSPOSE] Result: {len(data)} records, {empty_cols} empty cols skipped")
-    if data:
-        sample = data[0]
-        non_empty = {k: v for k, v in sample.items() if v}
-        empty_fields = [k for k, v in sample.items() if not v]
-        print(f"[TRANSPOSE] Record 1: {len(non_empty)}/{len(sample)} non-empty fields")
-        for k, v in list(non_empty.items())[:5]:
-            print(f"[TRANSPOSE]   {k} = '{str(v)[:60]}'")
-        if empty_fields:
-            print(f"[TRANSPOSE] Empty fields in record 1: {empty_fields}")
+    print(f"[TRANSPOSE-openpyxl-cellbycell] Result: {len(data)} records, {empty_cols} empty cols skipped")
 
     return headers, data
 
@@ -533,7 +606,7 @@ def _parse_excel_openpyxl(filepath, filename, header_row_override=None, transpos
 
     if transpose:
         # Transposed layout: column A = field names, each other column = a record
-        headers, data = _build_transposed_data_robust(ws, ws_raw, merge_map)
+        headers, data = _build_transposed_data_robust(ws, ws_raw, merge_map, filepath=filepath)
         header_info = "transposed"
     else:
         # Normal layout: detect or use override for header row

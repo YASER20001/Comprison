@@ -379,6 +379,58 @@ def diagnose_file():
         wb_data.close()
         wb_raw.close()
 
+        # Also try reading with calamine and pandas to compare
+        import pandas as pd
+        engines_result = {}
+        for engine in ['calamine', 'openpyxl']:
+            try:
+                df = pd.read_excel(filepath, header=None, sheet_name=0, engine=engine)
+                # Find the search field in the DataFrame
+                field_row = None
+                for r in range(len(df)):
+                    val = df.iloc[r, 0]
+                    if pd.notna(val) and search_field.lower() in str(val).lower():
+                        field_row = r
+                        break
+
+                engine_info = {
+                    "shape": list(df.shape),
+                    "fieldRow": field_row,
+                }
+
+                if field_row is not None:
+                    # Get values at that row for first 6 data columns
+                    vals = {}
+                    for c in range(min(7, len(df.columns))):
+                        v = df.iloc[field_row, c]
+                        vals[f"col{c}"] = str(v) if pd.notna(v) else "NaN"
+                    engine_info["valuesAtRow"] = vals
+
+                    # Count non-empty values in that row
+                    non_empty = sum(1 for c in range(len(df.columns))
+                                    if pd.notna(df.iloc[field_row, c]) and str(df.iloc[field_row, c]).strip() not in ('', 'nan'))
+                    engine_info["nonEmptyInRow"] = non_empty
+
+                # Also count total non-empty cells in row 1 (first record)
+                if len(df) > 0 and len(df.columns) > 1:
+                    rec1_non_empty = 0
+                    rec1_sample = {}
+                    for r in range(len(df)):
+                        v = df.iloc[r, 1]  # Column B = first record
+                        if pd.notna(v) and str(v).strip() not in ('', 'nan'):
+                            rec1_non_empty += 1
+                            if len(rec1_sample) < 5:
+                                field_name = df.iloc[r, 0] if pd.notna(df.iloc[r, 0]) else f"row{r}"
+                                rec1_sample[str(field_name)] = str(v)[:50]
+                    engine_info["record1NonEmpty"] = rec1_non_empty
+                    engine_info["record1Sample"] = rec1_sample
+
+                engines_result[engine] = engine_info
+            except Exception as e:
+                engines_result[engine] = {"error": str(e)}
+
+        result["engines"] = engines_result
+
         return jsonify(result)
     except Exception as e:
         import traceback

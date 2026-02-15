@@ -1430,6 +1430,36 @@ async function diagnoseFile() {
       });
     }
 
+    // Show engine comparison
+    if (d.engines) {
+      out += `\n=== ENGINE COMPARISON ===\n`;
+      Object.entries(d.engines).forEach(([engine, info]) => {
+        out += `\n--- ${engine} ---\n`;
+        if (info.error) {
+          out += `  ERROR: ${info.error}\n`;
+          return;
+        }
+        out += `  Shape: ${info.shape}\n`;
+        out += `  "${d.searchField}" found at row: ${info.fieldRow !== null ? info.fieldRow : 'NOT FOUND'}\n`;
+        if (info.nonEmptyInRow !== undefined) {
+          out += `  Non-empty values in "${d.searchField}" row: ${info.nonEmptyInRow}\n`;
+        }
+        if (info.valuesAtRow) {
+          out += `  Values at that row:\n`;
+          Object.entries(info.valuesAtRow).forEach(([col, val]) => {
+            out += `    ${col}: ${val}\n`;
+          });
+        }
+        out += `  Record 1 (col B) non-empty fields: ${info.record1NonEmpty || 0}\n`;
+        if (info.record1Sample) {
+          out += `  Record 1 sample values:\n`;
+          Object.entries(info.record1Sample).forEach(([field, val]) => {
+            out += `    ${field}: "${val}"\n`;
+          });
+        }
+      });
+    }
+
     el.textContent = out;
   } catch (err) {
     el.textContent = `Error: ${err.message}`;
