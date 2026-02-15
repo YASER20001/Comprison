@@ -346,34 +346,104 @@ def _extract_preview_rows(ws, merge_map, num_rows=50):
     return preview
 
 
-def _build_transposed_data(ws, merge_map):
+def _build_transposed_data(ws, merge_map, filepath=None):
     """
     Build headers and data from a transposed layout where:
     - Column A contains field names (headers)
     - Each subsequent column is a record
+
+    Uses pandas as primary reader (handles formulas/caching better),
+    falls back to openpyxl cell-by-cell if pandas fails.
     """
+    # ── TRY PANDAS FIRST (more robust for formula cells) ──
+    if filepath:
+        try:
+            df = pd.read_excel(filepath, header=None, sheet_name=0)
+            print(f"[TRANSPOSE-pandas] DataFrame shape: {df.shape}")
+
+            max_row_pd = len(df)
+            max_col_pd = len(df.columns)
+
+            # Column 0 = field names
+            headers = []
+            for r in range(max_row_pd):
+                val = df.iloc[r, 0]
+                name = str(val).strip() if pd.notna(val) and str(val).strip() != "nan" else ""
+                if not name:
+                    name = f"Field_{r + 1}"
+                headers.append(name)
+
+            # Strip trailing empty Field_N headers
+            while headers and headers[-1].startswith("Field_"):
+                headers.pop()
+            actual_rows = len(headers)
+
+            print(f"[TRANSPOSE-pandas] actual_rows={actual_rows}, headers[:10]={headers[:10]}")
+
+            # Deduplicate headers
+            seen = {}
+            for i, h in enumerate(headers):
+                if h in seen:
+                    seen[h] += 1
+                    headers[i] = f"{h}_{seen[h]}"
+                else:
+                    seen[h] = 0
+
+            # Each column (from 1 onwards in df) is one data record
+            data = []
+            empty_cols = 0
+            for c in range(1, max_col_pd):
+                row_dict = {}
+                all_empty = True
+                for r in range(actual_rows):
+                    val = df.iloc[r, c]
+                    s = str(val).strip() if pd.notna(val) and str(val).strip() != "nan" else ""
+                    row_dict[headers[r]] = s
+                    if s:
+                        all_empty = False
+                if not all_empty:
+                    data.append(row_dict)
+                else:
+                    empty_cols += 1
+
+            print(f"[TRANSPOSE-pandas] Result: {len(data)} records, {empty_cols} empty cols skipped")
+            if data:
+                # Show sample values for debugging
+                sample = data[0]
+                non_empty_fields = {k: v for k, v in sample.items() if v}
+                print(f"[TRANSPOSE-pandas] Record 1 has {len(non_empty_fields)}/{len(sample)} non-empty fields")
+                for k, v in list(non_empty_fields.items())[:3]:
+                    print(f"[TRANSPOSE-pandas]   {k} = '{v[:50]}'")
+
+            return headers, data
+
+        except Exception as e:
+            print(f"[TRANSPOSE-pandas] Failed, falling back to openpyxl: {e}")
+
+    # ── FALLBACK: OPENPYXL CELL-BY-CELL ──
     max_row = ws.max_row or 1
     max_col = ws.max_column or 1
 
-    print(f"[TRANSPOSE] Sheet dimensions: max_row={max_row}, max_col={max_col}")
+    print(f"[TRANSPOSE-openpyxl] Sheet dimensions: max_row={max_row}, max_col={max_col}")
 
     # Column A values = field names (headers)
     headers = []
     for r in range(1, max_row + 1):
-        val = _get_merged_cell_value(ws, r, 1, merge_map)
+        # Try direct read first, then merge resolution
+        val = ws.cell(row=r, column=1).value
+        if val is None:
+            val = _get_merged_cell_value(ws, r, 1, merge_map)
         name = str(val).strip() if val is not None else ""
         if not name:
             name = f"Field_{r}"
         headers.append(name)
-
-    print(f"[TRANSPOSE] Raw headers (first 10): {headers[:10]}")
 
     # Strip trailing empty Field_N headers
     while headers and headers[-1].startswith("Field_"):
         headers.pop()
     actual_rows = len(headers)
 
-    print(f"[TRANSPOSE] After stripping trailing empty: actual_rows={actual_rows}")
+    print(f"[TRANSPOSE-openpyxl] actual_rows={actual_rows}, headers[:10]={headers[:10]}")
 
     # Deduplicate headers
     seen = {}
@@ -385,13 +455,15 @@ def _build_transposed_data(ws, merge_map):
             seen[h] = 0
 
     # Each column (from 2 onwards) is one data record
+    # Read directly WITHOUT merge map to avoid data corruption
     data = []
     empty_cols = 0
     for c in range(2, max_col + 1):
         row_dict = {}
         all_empty = True
         for r in range(1, actual_rows + 1):
-            val = _get_merged_cell_value(ws, r, c, merge_map)
+            # Direct cell read (no merge map for data cells)
+            val = ws.cell(row=r, column=c).value
             s = str(val).strip() if val is not None else ""
             row_dict[headers[r - 1]] = s
             if s:
@@ -401,14 +473,11 @@ def _build_transposed_data(ws, merge_map):
         else:
             empty_cols += 1
 
-    print(f"[TRANSPOSE] Result: {len(data)} data records, {empty_cols} empty columns skipped")
+    print(f"[TRANSPOSE-openpyxl] Result: {len(data)} records, {empty_cols} empty cols skipped")
     if data:
-        print(f"[TRANSPOSE] Sample record keys: {list(data[0].keys())[:5]}")
-        # Show first non-empty value
-        for k, v in data[0].items():
-            if v:
-                print(f"[TRANSPOSE] Sample value: {k} = '{v}'")
-                break
+        sample = data[0]
+        non_empty_fields = {k: v for k, v in sample.items() if v}
+        print(f"[TRANSPOSE-openpyxl] Record 1 has {len(non_empty_fields)}/{len(sample)} non-empty fields")
 
     return headers, data
 
@@ -482,7 +551,7 @@ def _parse_excel_openpyxl(filepath, filename, header_row_override=None, transpos
 
     if transpose:
         # Transposed layout: column A = field names, each other column = a record
-        headers, data = _build_transposed_data(ws, merge_map)
+        headers, data = _build_transposed_data(ws, merge_map, filepath=filepath)
         header_info = "transposed"
     else:
         # Normal layout: detect or use override for header row
