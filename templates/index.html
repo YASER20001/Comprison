@@ -672,7 +672,11 @@
         </svg>
         Run Comparison
       </button>
+      <button class="compare-btn" style="background:#b45309;margin-left:8px;font-size:0.85rem;padding:8px 16px;" onclick="diagnoseFile()">
+        Diagnose File
+      </button>
     </div>
+    <div id="diagnoseResult" class="hidden" style="margin-top:12px;padding:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;font-size:0.75rem;max-height:400px;overflow-y:auto;white-space:pre-wrap;font-family:monospace;"></div>
   </div>
 
   <!-- ═══════ RESULTS SECTION ═══════ -->
@@ -1349,6 +1353,86 @@ async function runComparison() {
       </svg>
       Run Comparison
     `;
+  }
+}
+
+// ═══════ DIAGNOSE ═══════
+async function diagnoseFile() {
+  if (!beforeParsed || !beforeParsed._filepath) {
+    alert('Please upload a Before file first.');
+    return;
+  }
+
+  const keyCol = document.getElementById('keyColumnSelect').value;
+  const searchField = (keyCol && keyCol !== '__POSITION__') ? keyCol : 'SP ID';
+
+  const el = document.getElementById('diagnoseResult');
+  el.classList.remove('hidden');
+  el.textContent = `Scanning file for "${searchField}"...`;
+
+  try {
+    const resp = await fetch('/api/diagnose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filepath: beforeParsed._filepath,
+        searchField: searchField,
+      }),
+    });
+    const d = await resp.json();
+    if (d.error) {
+      el.textContent = `Error: ${d.error}`;
+      return;
+    }
+
+    let out = `=== FILE DIAGNOSIS ===\n`;
+    out += `Sheet: "${d.sheet}" | Dimensions: ${d.maxRow} rows x ${d.maxCol} cols\n`;
+    out += `All sheets: ${d.allSheets.join(', ')}\n`;
+    out += `Merged ranges: ${d.mergedRanges.length}\n\n`;
+
+    out += `=== COLUMN A (Field Names for Transpose Mode) ===\n`;
+    const colA = (d.columnA || []).filter(v => v.value);
+    colA.forEach(v => {
+      out += `  Row ${v.row}: "${v.value}"\n`;
+    });
+    out += `Total non-empty rows in column A: ${colA.length}\n\n`;
+
+    out += `=== SEARCH: "${d.searchField}" ===\n`;
+    if (d.found.length === 0) {
+      out += `NOT FOUND anywhere in the sheet!\n`;
+      out += `This field does not exist in the Excel file.\n`;
+    } else {
+      d.found.forEach(f => {
+        out += `\nFound at cell ${f.cellRef} (row ${f.row}, col ${f.col}):\n`;
+        out += `  data_only=True:  ${f.value_data_only || 'NULL'}\n`;
+        out += `  data_only=False: ${f.value_raw || 'NULL'}\n`;
+        out += `  Values to the RIGHT (same row = record values in transpose mode):\n`;
+        Object.entries(f.right || {}).forEach(([cell, vals]) => {
+          out += `    ${cell}: data=${vals.data_only || 'NULL'} | raw=${vals.raw || 'NULL'}\n`;
+        });
+        out += `  Values BELOW (same column = record values in normal mode):\n`;
+        Object.entries(f.below || {}).forEach(([cell, vals]) => {
+          out += `    ${cell}: data=${vals.data_only || 'NULL'} | raw=${vals.raw || 'NULL'}\n`;
+        });
+      });
+    }
+
+    // Also show parsed data sample
+    out += `\n=== PARSED DATA (what the app sees) ===\n`;
+    out += `Headers count: ${beforeParsed.headers.length}\n`;
+    out += `Records count: ${beforeParsed.data.length}\n`;
+    if (beforeParsed.data.length > 0) {
+      const rec = beforeParsed.data[0];
+      out += `\nRecord 1 - ALL fields:\n`;
+      Object.entries(rec).forEach(([k, v]) => {
+        const status = v ? 'HAS VALUE' : 'EMPTY';
+        out += `  ${k}: ${status}${v ? ` = "${String(v).substring(0, 40)}"` : ''}\n`;
+      });
+    }
+
+    el.textContent = out;
+  } catch (err) {
+    el.textContent = `Error: ${err.message}`;
   }
 }
 

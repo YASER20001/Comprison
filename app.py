@@ -4,6 +4,7 @@ import os
 import uuid
 import json
 from flask import Flask, render_template, request, jsonify, send_file
+from openpyxl.utils import get_column_letter
 from file_parser import parse_file, SUPPORTED_EXTENSIONS
 from comparison_engine import compare_datasets, stringify
 from excel_export import export_comparison
@@ -273,6 +274,115 @@ def debug_upload():
     except Exception as e:
         os.remove(filepath)
         return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/diagnose", methods=["POST"])
+def diagnose_file():
+    """Scan an uploaded file and report ALL cell values, searching for specific fields."""
+    body = request.get_json()
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    filepath = body.get("filepath")
+    search_field = body.get("searchField", "SP ID")
+
+    if not filepath or not os.path.exists(filepath):
+        return jsonify({"error": "File not found. Please re-upload."}), 404
+
+    try:
+        from openpyxl import load_workbook
+
+        wb_data = load_workbook(filepath, read_only=False, data_only=True)
+        wb_raw = load_workbook(filepath, read_only=False, data_only=False)
+        ws_data = wb_data[wb_data.sheetnames[0]]
+        ws_raw = wb_raw[wb_raw.sheetnames[0]]
+
+        max_row = ws_data.max_row or 1
+        max_col = ws_data.max_column or 1
+
+        result = {
+            "sheet": wb_data.sheetnames[0],
+            "allSheets": wb_data.sheetnames,
+            "maxRow": max_row,
+            "maxCol": max_col,
+            "mergedRanges": [str(m) for m in ws_data.merged_cells.ranges],
+            "searchField": search_field,
+            "found": [],
+        }
+
+        # Scan EVERY cell for the search field
+        for r in range(1, min(max_row + 1, 500)):
+            for c in range(1, min(max_col + 1, 500)):
+                val_data = ws_data.cell(row=r, column=c).value
+                val_raw = ws_raw.cell(row=r, column=c).value
+
+                for val in [val_data, val_raw]:
+                    if val is not None and search_field.lower() in str(val).lower():
+                        # Found the field! Get surrounding values
+                        neighbors = {}
+                        for dc in range(0, min(6, max_col - c + 1)):
+                            neighbor_data = ws_data.cell(row=r, column=c + dc).value
+                            neighbor_raw = ws_raw.cell(row=r, column=c + dc).value
+                            col_letter = get_column_letter(c + dc)
+                            neighbors[f"{col_letter}{r}"] = {
+                                "data_only": str(neighbor_data) if neighbor_data is not None else None,
+                                "raw": str(neighbor_raw) if neighbor_raw is not None else None,
+                            }
+
+                        # Also get values in the same column below (if field is a header)
+                        below = {}
+                        for dr in range(1, min(6, max_row - r + 1)):
+                            below_data = ws_data.cell(row=r + dr, column=c).value
+                            below_raw = ws_raw.cell(row=r + dr, column=c).value
+                            below[f"row{r+dr}"] = {
+                                "data_only": str(below_data) if below_data is not None else None,
+                                "raw": str(below_raw) if below_raw is not None else None,
+                            }
+
+                        # Also get values in the same row to the right (if field is a row header)
+                        right = {}
+                        for dc in range(1, min(6, max_col - c + 1)):
+                            right_data = ws_data.cell(row=r, column=c + dc).value
+                            right_raw = ws_raw.cell(row=r, column=c + dc).value
+                            col_letter = get_column_letter(c + dc)
+                            right[f"{col_letter}{r}"] = {
+                                "data_only": str(right_data) if right_data is not None else None,
+                                "raw": str(right_raw) if right_raw is not None else None,
+                            }
+
+                        result["found"].append({
+                            "row": r,
+                            "col": c,
+                            "colLetter": get_column_letter(c),
+                            "cellRef": f"{get_column_letter(c)}{r}",
+                            "value_data_only": str(val_data) if val_data is not None else None,
+                            "value_raw": str(val_raw) if val_raw is not None else None,
+                            "neighbors": neighbors,
+                            "below": below,
+                            "right": right,
+                        })
+                        break  # Don't report same cell twice
+
+        # Also dump column A values (all field names in transposed mode)
+        col_a_values = []
+        for r in range(1, min(max_row + 1, 100)):
+            val = ws_data.cell(row=r, column=1).value
+            val_raw = ws_raw.cell(row=r, column=1).value
+            effective = val if val is not None else val_raw
+            col_a_values.append({
+                "row": r,
+                "value": str(effective).strip() if effective is not None else None,
+            })
+
+        result["columnA"] = col_a_values
+
+        wb_data.close()
+        wb_raw.close()
+
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
 
 
 if __name__ == "__main__":
