@@ -659,7 +659,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
         Key Column (Unique Identifier)
       </h3>
-      <p>Select the column that uniquely identifies each row. This is used to match rows between files.</p>
+      <p>Select the column that uniquely identifies each row, or use position-based matching.</p>
       <select id="keyColumnSelect"></select>
     </div>
 
@@ -977,13 +977,21 @@ function updateKeyColumns() {
   keyStats.sort((a, b) => b.total - a.total);
 
   const sel = document.getElementById('keyColumnSelect');
-  sel.innerHTML = keyStats.map(s => {
+
+  // Always add "Match by Position" as the first option
+  const bLen = (beforeParsed.data || []).length;
+  const aLen = (afterParsed.data || []).length;
+  let optionsHtml = `<option value="__POSITION__">Match by Position / Row # (${bLen} vs ${aLen} records)</option>`;
+
+  optionsHtml += keyStats.map(s => {
     const badge = s.total === 0
       ? '(no values!)'
       : `(${s.bUnique} / ${s.aUnique} unique)`;
-    const recommended = s === keyStats[0] ? ' - RECOMMENDED' : '';
+    const recommended = s === keyStats[0] && s.total > 0 ? ' - BEST KEY' : '';
     return `<option value="${s.col}">${esc(s.col)} ${badge}${recommended}</option>`;
   }).join('');
+
+  sel.innerHTML = optionsHtml;
 
   // Show key column stats info
   const best = keyStats[0];
@@ -994,9 +1002,9 @@ function updateKeyColumns() {
     keyInfo = document.getElementById('keyColumnInfo');
   }
   if (best.total > 0) {
-    keyInfo.innerHTML = `<span style="color:#166534;">Best key: <b>${esc(best.col)}</b> with ${best.bUnique} unique values in before, ${best.aUnique} in after</span>`;
+    keyInfo.innerHTML = `<span style="color:#166534;">Best key column: <b>${esc(best.col)}</b> (${best.bUnique} / ${best.aUnique} unique). Or use "Match by Position" to compare records in order.</span>`;
   } else {
-    keyInfo.innerHTML = `<span style="color:#991b1b;">Warning: No column has unique values. Comparison may return 0 results.</span>`;
+    keyInfo.innerHTML = `<span style="color:#b45309;">No column has unique key values. Use <b>"Match by Position"</b> to compare records by their order.</span>`;
   }
 
   document.getElementById('keySelector').classList.remove('hidden');
@@ -1016,6 +1024,22 @@ function showKeyValuePreview() {
     const container = document.getElementById('keySelector');
     container.insertAdjacentHTML('beforeend', '<div id="keyValuePreview" style="margin-top:8px;padding:8px;background:#f8f9fa;border:1px solid #e5e7eb;border-radius:6px;font-size:0.75rem;max-height:120px;overflow-y:auto;"></div>');
     infoEl = document.getElementById('keyValuePreview');
+  }
+
+  // Position match mode
+  if (keyCol === '__POSITION__') {
+    const bLen = (beforeParsed?.data || []).length;
+    const aLen = (afterParsed?.data || []).length;
+    let html = `<b>Match by Position</b><br>`;
+    html += `Records will be matched by their order: Record 1 vs Record 1, Record 2 vs Record 2, etc.<br>`;
+    html += `Before: ${bLen} records, After: ${aLen} records.`;
+    if (bLen !== aLen) {
+      const diff = Math.abs(bLen - aLen);
+      const more = bLen > aLen ? 'Before' : 'After';
+      html += ` <span style="color:#b45309;">${more} has ${diff} extra record(s) that will show as added/deleted.</span>`;
+    }
+    infoEl.innerHTML = html;
+    return;
   }
 
   // Show sample key values from both files
@@ -1235,20 +1259,20 @@ async function runComparison() {
   const keyCol = document.getElementById('keyColumnSelect').value;
   if (!keyCol) return;
 
-  // Validate key column has values
-  const bKeys = (beforeParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
-  const aKeys = (afterParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
+  const isPositionMatch = (keyCol === '__POSITION__');
 
-  console.log(`[ComprisonTool] Key column "${keyCol}": before has ${bKeys}/${beforeParsed.data.length} non-empty, after has ${aKeys}/${afterParsed.data.length} non-empty`);
+  // Validate key column has values (skip for position matching)
+  if (!isPositionMatch) {
+    const bKeys = (beforeParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
+    const aKeys = (afterParsed.data || []).filter(r => (r[keyCol] || '').trim()).length;
 
-  if (bKeys === 0 && aKeys === 0) {
-    alert(`The key column "${keyCol}" has NO values in either file!\n\nThis means every record has an empty value for "${keyCol}", so nothing can be matched.\n\nPlease choose a different key column that has unique values (look for the RECOMMENDED option).`);
-    return;
-  }
+    console.log(`[ComprisonTool] Key column "${keyCol}": before has ${bKeys}/${beforeParsed.data.length} non-empty, after has ${aKeys}/${afterParsed.data.length} non-empty`);
 
-  if (bKeys === 0 || aKeys === 0) {
-    const which = bKeys === 0 ? 'Before' : 'After';
-    if (!confirm(`Warning: "${keyCol}" has 0 values in the ${which} file.\n\nAll records from ${which} will show as deleted/added.\n\nContinue anyway?`)) return;
+    if (bKeys === 0 && aKeys === 0) {
+      if (!confirm(`The key column "${keyCol}" has NO values in either file.\n\nWould you like to use "Match by Position" instead?\n(Click Cancel to choose a different key column)`)) return;
+      document.getElementById('keyColumnSelect').value = '__POSITION__';
+      return runComparison();  // Retry with position matching
+    }
   }
 
   const btn = document.getElementById('compareBtn');
@@ -1256,20 +1280,27 @@ async function runComparison() {
   btn.innerHTML = '<span class="spinner"></span> Comparing Files...';
 
   try {
+    // For position matching, inject a __ROW_NUM__ key into each record
+    let beforeData = beforeParsed.data;
+    let afterData = afterParsed.data;
+    let effectiveKeyCol = keyCol;
+
+    if (isPositionMatch) {
+      effectiveKeyCol = '__ROW_NUM__';
+      beforeData = beforeParsed.data.map((r, i) => ({ ...r, '__ROW_NUM__': `Row_${i + 1}` }));
+      afterData = afterParsed.data.map((r, i) => ({ ...r, '__ROW_NUM__': `Row_${i + 1}` }));
+    }
+
     const payload = {
-      beforeData: beforeParsed.data,
-      afterData: afterParsed.data,
-      keyColumn: keyCol,
+      beforeData: beforeData,
+      afterData: afterData,
+      keyColumn: effectiveKeyCol,
       beforeHeaders: beforeParsed.headers.filter(h => selectedColumns.includes(h)),
       afterHeaders: afterParsed.headers.filter(h => selectedColumns.includes(h)),
       beforeFileName: beforeParsed.fileName,
       afterFileName: afterParsed.fileName,
     };
-    console.log(`[ComprisonTool] Comparing: before=${payload.beforeData.length} records, after=${payload.afterData.length} records, key="${keyCol}", headers=${payload.beforeHeaders.length}`);
-    if (payload.beforeData.length > 0) {
-      console.log('[ComprisonTool] Sample before record keys:', Object.keys(payload.beforeData[0]));
-      console.log('[ComprisonTool] Sample before key value:', JSON.stringify(payload.beforeData[0][keyCol]));
-    }
+    console.log(`[ComprisonTool] Comparing: before=${payload.beforeData.length} records, after=${payload.afterData.length} records, key="${effectiveKeyCol}", headers=${payload.beforeHeaders.length}`);
     const resp = await fetch('/api/compare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
